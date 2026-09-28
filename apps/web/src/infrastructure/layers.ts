@@ -65,9 +65,9 @@ const docWriterLayer = (env: Env, mode: ExplorerMode) => {
  */
 const previewBuilderLayer = (env: Env, mode: ExplorerMode) => {
   const transport = makeAgentsTransport(env, mode === "cloudflare")
-  if (transport) return { layer: AgentsPreviewBuilder({ transport, preset: env.AGENT_PRESET }), enabled: true }
-  if (mode === "local") return { layer: FakePreviewBuilder(), enabled: true }
-  return { layer: unconfiguredPreviewBuilder, enabled: false }
+  if (transport) return { layer: AgentsPreviewBuilder({ transport, preset: env.AGENT_PRESET }), enabled: true, fake: false }
+  if (mode === "local") return { layer: FakePreviewBuilder(), enabled: true, fake: true }
+  return { layer: unconfiguredPreviewBuilder, enabled: false, fake: false }
 }
 
 const embedderLayer = (env: Env, mode: ExplorerMode) => {
@@ -115,7 +115,7 @@ export const makeAppLayer = (env: Env, dispatch: (job: InlineJob) => void) => {
     textIndex,
     vectorIndex,
     scheduler,
-    makeExplorerConfig(env, { previewsEnabled: preview.enabled }),
+    makeExplorerConfig(env, { previewsEnabled: preview.enabled, fakePreviewBuilder: preview.fake }),
   )
 }
 

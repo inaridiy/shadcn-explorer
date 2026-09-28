@@ -26,14 +26,18 @@ const rates = (env: Env, prefix: "DOC" | "PREVIEW", fallback: TokenRates): Token
  * - previewTokensEstimate: サンドボックスの多ターン実行。キャッシュ率を高めに見積もる (要実測)
  * - Browser Rendering $0.09 / browser-hour、gemini-embedding-2 $0.20 / 1M text tokens・約 $0.00012 / image
  */
-export const makeExplorerConfig = (env: Env, options: { readonly previewsEnabled: boolean }) =>
+export const makeExplorerConfig = (
+  env: Env,
+  options: { readonly previewsEnabled: boolean; readonly fakePreviewBuilder?: boolean },
+) =>
   Layer.succeed(ExplorerConfig, {
     prices: {
       docModel: rates(env, "DOC", GPT_6_LUNA),
       docTokensEstimate: { inputTokens: 12_000, cachedInputTokens: 0, outputTokens: 3_000 },
       previewModel: rates(env, "PREVIEW", GPT_6_LUNA),
       previewTokensEstimate: { inputTokens: 400_000, cachedInputTokens: 300_000, outputTokens: 20_000 },
-      previewSandboxEstimate: usd(0.01),
+      // フェイクのビルダー (local) ではサンドボックス費用は発生しない
+      previewSandboxEstimate: options.fakePreviewBuilder ? usd(0) : usd(0.01),
       browserPerSecond: usd(0.09 / 3600),
       browserSecondsPerPreview: 8,
       textEmbedding: usd(0.0004),

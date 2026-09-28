@@ -230,7 +230,8 @@ export const FakePreviewBuilder = (
           return {
             _tag: "Done" as const,
             html: Option.fromNullable(j.html),
-            usage: { inputTokens: 200_000, cachedInputTokens: 150_000, outputTokens: 10_000, durationMs: 60_000 },
+            // フェイクなのでトークンは消費していない (ローカルの台帳・予算を汚さない)
+            usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, durationMs: 0 },
           }
         }),
       cancel: (job) => Effect.sync(() => void jobs.delete(job.id)),
