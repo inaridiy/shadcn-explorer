@@ -52,7 +52,7 @@ export const usageDocJsonSchema = {
 
 const INSTRUCTIONS = `You are a senior design-engineer who documents shadcn/ui registry items.
 Read the registry item's real source code and describe its actual API precisely. Never invent props that are not in the source.
-All text in English. Code samples are TSX that would type-check against the source.`
+All text in English except the Japanese keywords requested below. Code samples are TSX that would type-check against the source.`
 
 const MAX_ITEM_JSON = 80_000
 
@@ -72,7 +72,7 @@ Fill every field:
 - examples: 2-4 realistic examples; each code is ONLY TSX source without markdown fences.
 - props: from the source's props type (default null when none).
 - accessibility: concrete notes.
-- keywords: 5-15 search keywords including synonyms (e.g. "cta", "shiny").`
+- keywords: 8-20 search keywords including synonyms (e.g. "cta", "shiny") AND their Japanese equivalents (e.g. "ボタン", "かっこいい", "ドット絵") so that Japanese keyword search also matches.`
 }
 
 const ResponsesOutput = Schema.Struct({
