@@ -1,0 +1,25 @@
+{
+  "name": "@shadcn-explorer/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./domain": "./src/domain/index.ts",
+    "./ports": "./src/ports/index.ts",
+    "./application": "./src/application/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "^3.22.2"
+  },
+  "devDependencies": {
+    "@effect/vitest": "^0.30.0",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
