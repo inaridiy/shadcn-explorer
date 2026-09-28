@@ -118,6 +118,17 @@ v1.get("/components/:registryId/:name", (c) =>
   ),
 )
 
+/** ドキュメント・プレビューの再生成を要求 (レジストリ登録者のみ) */
+v1.post("/components/:registryId/:name/enrich", (c) =>
+  respond(
+    Application.requestEnrichment(
+      ComponentId.make(`${c.req.param("registryId")}:${c.req.param("name")}`),
+      UserId.make(c.get("userId")),
+    ),
+    () => ({ scheduled: true }),
+  ),
+)
+
 v1.get("/registries", (c) =>
   respond(Application.listRegistries, (list) => ({
     registries: list.map((r) => toRegistryDto(r.registry, r.componentCount)),

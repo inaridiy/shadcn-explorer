@@ -15,6 +15,7 @@ import { makeExplorerConfig } from "./config"
 import { D1ComponentRepository, D1RegistryRepository, D1UsageLedger } from "./d1-repositories"
 import { D1FtsTextIndex, D1LocalVisualIndex } from "./d1-search-indexes"
 import { GeminiEmbedder } from "./gemini-embedder"
+import { OpenAIDocAgent } from "./openai-doc-agent"
 import { type InlineJob, InlineJobScheduler, WorkflowJobScheduler } from "./job-scheduler"
 import { R2BlobStore } from "./r2-blob-store"
 import { FetchRegistryHttp } from "./registry-http"
@@ -40,8 +41,17 @@ const unconfiguredRenderer = Layer.succeed(PreviewRenderer, {
 })
 
 const agentLayer = (env: Env, mode: ExplorerMode) => {
+  // 1. サンドボックスで実ビルド・型検査する CF-Open-Agents-API (プレビュー HTML も生成)
   const transport = makeAgentsTransport(env, mode === "cloudflare")
   if (transport) return AgentsCodingAgent({ transport, preset: env.AGENT_PRESET })
+  // 2. OpenAI Responses API を直接 (ドキュメントのみ)
+  if (env.OPENAI_API_KEY) {
+    return OpenAIDocAgent({
+      apiKey: env.OPENAI_API_KEY,
+      model: env.OPENAI_MODEL || "gpt-6-luna",
+      ...(env.OPENAI_BASE_URL ? { baseUrl: env.OPENAI_BASE_URL } : {}),
+    })
+  }
   return mode === "local" ? FakeCodingAgent() : unconfiguredAgent
 }
 

@@ -39,7 +39,10 @@
     // "ai-search" | "d1" (D1 FTS5 の BM25)
     "TEXT_SEARCH_BACKEND": "ai-search",
     "AGENTS_TENANT": "shadcn-explorer",
+    // CF-Open-Agents-API のプリセット名 (Agents 側で gpt-6-luna に割り当てる。docs/agents-worker.md)
     "AGENT_PRESET": "codex",
+    // Agents API が無い場合に Responses API で直接使うモデル
+    "OPENAI_MODEL": "gpt-6-luna",
     "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2",
     "GEMINI_EMBEDDING_DIMENSIONS": "1536",
     "MONTHLY_BUDGET_USD": "100",
@@ -49,5 +52,6 @@
   }
   // Secrets (wrangler secret put):
   //   BETTER_AUTH_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
-  //   GEMINI_API_KEY, AI_GATEWAY_BASE_URL (任意), AGENTS_API_URL/AGENTS_API_TOKEN (Service Binding を使わない場合)
+  //   GEMINI_API_KEY, AI_GATEWAY_BASE_URL (任意), AGENTS_API_URL/AGENTS_API_TOKEN (Service Binding を使わない場合),
+  //   OPENAI_API_KEY (Agents API を使わずに Responses API で直接ドキュメント生成する場合)
 }

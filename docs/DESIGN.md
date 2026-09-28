@@ -124,7 +124,9 @@ Syncing がタイムアウト (isStaleSync) したら、Failed に落として�
 ### 6.1 Coding Agent によるドキュメント・プレビュー生成
 
 - 実行環境は **CF-Open-Agents-API** (OpenAI Agents API `agents=v1` 互換)。Service Binding の `fetchAs(tenant, req)` で呼ぶので、Worker 間でトークンを受け渡さない。
-- **モデル指定について (要確認)**: クライアントはモデル名ではなく**プリセット名** (`AGENT_PRESET`、既定 `codex`) を送る。実モデルへの割り当ては Agents API 側の `defineAgentWorker` で設定する。リポジトリ内に `gpt-6-luan` は見当たらず、近いのは `gpt-6-astra` (openai) と `gpt-5.6-luna` (openaiFast) だった。
+- **モデル**: **`gpt-6-luna`** を使う (OpenAI API で存在を確認済み)。Agents API にはクライアントから**プリセット名** (`AGENT_PRESET`、既定 `codex`) を送り、Agents Worker 側の `defineAgentWorker({ models })` で次のように割り当てる。
+  `codex: () => nativeModel({ protocol: "responses", baseURL: "https://api.openai.com/v1", apiKey: env.OPENAI_API_KEY, model: "gpt-6-luna" })`
+- **フォールバック**: Agents API が未デプロイで `OPENAI_API_KEY` がある場合は、`OpenAIDocAgent` が Responses API を直接呼ぶ (Structured Outputs で `UsageDoc` を返させる)。サンドボックスが無いのでプレビュー HTML は作らず、ドキュメントだけを生成する。優先順位は Agents API → OpenAI 直接 → (local のみ) フェイク。
 - 1 コンポーネントにつき 1 セッションで、サンドボックス内で次を行う。
   1. Vite + React + Tailwind v4 の雛形を作り、`shadcn init` と `shadcn add <item>` を実行する
   2. ソースを読んで実際の API を把握し、デモ `App.tsx` を書く (`#preview` ラッパー、`.dark` 対応)
@@ -236,10 +238,12 @@ $$
 **ローカルでの E2E 確認 (`EXPLORER_MODE=local`、実在レジストリ使用)**
 - サインアップ → API キー発行 → `@23rd` (28 件) と `https://www.8bitcn.com` (121 件、`/r/registry.json` を自動発見し、`@8bitcn` をディレクトリから推定) の登録 → 同期 → Active まで確認済み
 - API キーのレート制限が発動することも確認済み。これを受けて 429 を返すように修正した
-- エンリッチは途中まで確認: ローカルで未起動の Agents Service Binding を掴んでいたバグを修正した後、dev サーバーのリロードでインラインキューが途切れて止まっている。**検索と MCP の E2E 確認はまだ**
+- **gpt-6-luna による実ドキュメント生成**を確認 (`@23rd/ascii-logo`)。実際のソースから props (text, src, fit, cellSize …) を正しく抽出できた。1 件あたり約 24 秒
+- 検索 (hybrid / keyword、日本語を含むクエリ) と MCP (`initialize` / `tools/list` / `search_components` / `get_component`) の E2E を確認
+- 手動の再生成要求 `POST /api/v1/components/:registry/:name/enrich` (登録者のみ。失敗状態をリセットして再投入する) を追加
 
 **要確認・未決事項**
-1. Agent のプリセットとモデル名 (`gpt-6-luan` → `gpt-6-astra` か `gpt-5.6-luna` か) と、その単価 (コスト試算の最大要因)
+1. `gpt-6-luna` の単価に基づくコスト試算の更新 (`agentRunEstimate` は現状仮の $0.12)。実トークン数は `usage_records.detail` に記録している
 2. AI Search の Items API で、同じキーを再アップロードしたときに上書き扱いになるかの実機確認
 3. Agent のポーリングは今 1 つの Workflow ステップ内で待っている → `step.sleep` を使った 2 段階化 (開始 → 待機 → 回収) で実行時間を抑える
 4. 公式ディレクトリを一括インポートするか (初回約 \$2.3k の見積もり)。するなら、人気順に段階的に取り込む案

@@ -8,6 +8,7 @@ import {
   type MicroUsd,
   UsageRecord,
   type UsageDoc,
+  type UserId,
   decideBudget,
   estimateStepCost,
   installCommand,
@@ -22,6 +23,7 @@ import {
   ComponentRepository,
   Embedder,
   ExplorerConfig,
+  JobScheduler,
   PreviewRenderer,
   RegistryHttp,
   RegistryRepository,
@@ -30,6 +32,7 @@ import {
   VisualIndex,
   type VisualVector,
 } from "../ports/index.js"
+import { NotRegistryOwner } from "./sync-registry.js"
 
 export class ComponentNotFound extends Data.TaggedError("ComponentNotFound")<{
   readonly componentId: ComponentId
@@ -298,4 +301,31 @@ export const enrichComponent = (id: ComponentId) =>
       outcomes.push({ step: step._tag, outcome: yield* runEnrichmentStep(id, step) })
     }
     return { plan, outcomes }
+  })
+
+/**
+ * 手動のエンリッチ要求 (ドキュメント再生成など)。登録者のみ。
+ * 失敗回数の上限で止まっているものも、明示的な要求ならリセットして再試行する。
+ */
+export const requestEnrichment = (id: ComponentId, requester: UserId) =>
+  Effect.gen(function* () {
+    const record = yield* loadRecord(id)
+    const registries = yield* RegistryRepository
+    const repo = yield* ComponentRepository
+    const scheduler = yield* JobScheduler
+    const registry = yield* registries.findById(record.snapshot.registryId)
+    const ownerId = Option.getOrNull(Option.flatMap(registry, (r) => Option.fromNullable(r.ownerId)))
+    if (ownerId !== null && ownerId !== requester) {
+      return yield* new NotRegistryOwner({ registryId: record.snapshot.registryId })
+    }
+    const reset = (s: { readonly _tag: string }) => s._tag === "Failed"
+    yield* repo.saveEnrichment(
+      id,
+      new EnrichmentState({
+        doc: reset(record.enrichment.doc) ? { _tag: "NotGenerated" } : record.enrichment.doc,
+        preview: reset(record.enrichment.preview) ? { _tag: "NotCaptured" } : record.enrichment.preview,
+        index: record.enrichment.index,
+      }),
+    )
+    yield* scheduler.scheduleEnrichment([id])
   })

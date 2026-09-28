@@ -12,6 +12,10 @@ interface ExplorerSecrets {
   /** Service Binding を使わず公開 URL で CF-Open-Agents-API を呼ぶ場合 */
   AGENTS_API_URL?: string
   AGENTS_API_TOKEN?: string
+  /** Agents API 未設定時に Responses API を直接呼ぶ (ドキュメント生成のみ) */
+  OPENAI_API_KEY?: string
+  /** 例: AI Gateway の https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai */
+  OPENAI_BASE_URL?: string
 }
 
 interface Env extends ExplorerSecrets {}

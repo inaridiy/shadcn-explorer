@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect, Layer, Option, TestClock } from "effect"
 import {
   enrichComponent,
+  requestEnrichment,
   getComponentDetail,
   listRegistries,
   previewRegistration,
@@ -9,7 +10,7 @@ import {
   searchComponents,
   syncRegistry,
 } from "../src/application/index.js"
-import { ComponentId, RegistryId, type UsageRecord, usd } from "../src/domain/index.js"
+import { ComponentId, RegistryId, UserId, type UsageRecord, usd } from "../src/domain/index.js"
 import { BlobStore, ComponentRepository, RegistryRepository } from "../src/ports/index.js"
 import { type ScheduledJobs, makeInMemoryLayer } from "../src/testing/index.js"
 
@@ -253,6 +254,33 @@ describe("enrichment", () => {
       const { plan, outcomes } = yield* enrichComponent(jobs.enrichments[0]!)
       expect(plan.decision._tag).toBe("Defer")
       expect(outcomes).toEqual([])
+    }).pipe(Effect.provide(layer))
+  })
+})
+
+describe("manual enrichment", () => {
+  it.effect("登録者は失敗したドキュメント生成を再要求でき、失敗状態がリセットされる", () => {
+    const { layer, jobs } = setup({ agentFailFor: ["data-table"] })
+    return Effect.gen(function* () {
+      const owner = UserId.make("u1")
+      const registry = yield* registerRegistry(INDEX, owner)
+      yield* syncRegistry(registry.id)
+      for (const id of jobs.enrichments.splice(0)) yield* enrichComponent(id)
+      const id = ComponentId.make("acme:data-table")
+      yield* requestEnrichment(id, owner)
+      expect(jobs.enrichments).toEqual([id])
+      const repo = yield* ComponentRepository
+      expect(Option.getOrThrow(yield* repo.findById(id)).enrichment.doc._tag).toBe("NotGenerated")
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("登録者以外は再生成を要求できない", () => {
+    const { layer } = setup()
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, UserId.make("u1"))
+      yield* syncRegistry(registry.id)
+      const error = yield* Effect.flip(requestEnrichment(ComponentId.make("acme:glow-button"), UserId.make("u2")))
+      expect(error._tag).toBe("NotRegistryOwner")
     }).pipe(Effect.provide(layer))
   })
 })
