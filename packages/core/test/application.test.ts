@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect, Layer, Option, TestClock } from "effect"
 import {
+  collectPreviewBuild,
   enrichComponent,
   requestEnrichment,
+  scheduleBacklog,
+  startPreviewBuild,
   getComponentDetail,
   listRegistries,
   previewRegistration,
@@ -10,9 +13,9 @@ import {
   searchComponents,
   syncRegistry,
 } from "../src/application/index.js"
-import { ComponentId, RegistryId, UserId, type UsageRecord, usd } from "../src/domain/index.js"
+import { ComponentId, RegistryId, UsageRecord, UserId, usd } from "../src/domain/index.js"
 import { BlobStore, ComponentRepository, RegistryRepository } from "../src/ports/index.js"
-import { type ScheduledJobs, makeInMemoryLayer } from "../src/testing/index.js"
+import { type ScheduledJobs, makeInMemoryLayer, testConfig } from "../src/testing/index.js"
 
 const INDEX = "https://acme.dev/r/registry.json"
 
@@ -51,7 +54,9 @@ const baseFixtures = (): Record<string, unknown> => ({
   }),
 })
 
-const setup = (overrides: { fixtures?: Record<string, unknown>; agentFailFor?: Array<string> } = {}) => {
+const setup = (
+  overrides: { fixtures?: Record<string, unknown>; agentFailFor?: Array<string>; previewFailFor?: Array<string> } = {},
+) => {
   const jobs: ScheduledJobs = { syncs: [], enrichments: [] }
   const usage: Array<UsageRecord> = []
   const fixtures = overrides.fixtures ?? baseFixtures()
@@ -60,6 +65,7 @@ const setup = (overrides: { fixtures?: Record<string, unknown>; agentFailFor?: A
     jobs,
     usage,
     ...(overrides.agentFailFor ? { agentFailFor: overrides.agentFailFor } : {}),
+    ...(overrides.previewFailFor ? { previewFailFor: overrides.previewFailFor } : {}),
   })
   return { jobs, usage, fixtures, layer }
 }
@@ -216,8 +222,11 @@ describe("enrichment", () => {
       expect(hook.enrichment.preview._tag).toBe("NotCaptured")
       expect(hook.enrichment.index).toMatchObject({ _tag: "Indexed", withImage: false })
 
-      expect(usage.filter((u) => u.category === "agent")).toHaveLength(3)
+      // ドキュメントは 3 件とも LLM、プレビューはビジュアルな 2 件だけ (hook は除外)
+      expect(usage.filter((u) => u.category === "llm")).toHaveLength(3)
+      expect(usage.filter((u) => u.category === "agent")).toHaveLength(2)
       expect(usage.filter((u) => u.category === "browser")).toHaveLength(2)
+      expect(usage.every((u) => u.registryId === "acme")).toBe(true)
     }).pipe(Effect.provide(layer))
   })
 
@@ -233,15 +242,76 @@ describe("enrichment", () => {
     }).pipe(Effect.provide(layer))
   })
 
-  it.effect("Agent が失敗しても状態に記録し、テキストだけはインデックスする", () => {
+  it.effect("ドキュメント生成が失敗しても状態に記録し、プレビューとインデックスは続ける", () => {
     const { layer, jobs } = setup({ agentFailFor: ["data-table"] })
     return Effect.gen(function* () {
       yield* ingestAll(jobs)
       const repo = yield* ComponentRepository
       const table = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:data-table")))
       expect(table.enrichment.doc).toMatchObject({ _tag: "Failed", attempts: 1 })
-      expect(table.enrichment.preview._tag).toBe("Skipped")
+      expect(table.enrichment.preview._tag).toBe("Captured")
       expect(table.enrichment.index._tag).toBe("Indexed")
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("プレビュービルドが失敗しても他のコンポーネント・ステップは止まらない", () => {
+    const { layer, jobs } = setup({ previewFailFor: ["glow-button"] })
+    return Effect.gen(function* () {
+      yield* ingestAll(jobs)
+      const repo = yield* ComponentRepository
+      const button = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:glow-button")))
+      expect(button.enrichment.preview).toMatchObject({ _tag: "Failed", stage: "build", attempts: 1 })
+      expect(button.enrichment.index).toMatchObject({ _tag: "Indexed", withImage: false })
+      const table = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:data-table")))
+      expect(table.enrichment.preview._tag).toBe("Captured")
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("生成時にアイテム JSON を再取得しない (同期時に保存した原本を使う)", () => {
+    const calls: Array<string> = []
+    const fixtures = baseFixtures()
+    const layer = makeInMemoryLayer({ fixtures, httpCalls: calls, jobs: { syncs: [], enrichments: [] } })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const before = calls.length
+      // レジストリ側が消えても生成できる
+      delete fixtures["https://acme.dev/r/glow-button.json"]
+      const { outcomes } = yield* enrichComponent(ComponentId.make("acme:glow-button"))
+      expect(outcomes.map((o) => o.outcome._tag)).toEqual(["Done", "Done", "Done", "Done"])
+      expect(calls.length).toBe(before)
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("インデックスに内容が同梱されたレジストリ (個別 JSON 無し) でも生成できる", () => {
+    const fixtures: Record<string, unknown> = {
+      "https://ui.shadcn.com/r/registries.json": [],
+      [INDEX]: {
+        name: "inline",
+        items: [{ name: "badge", type: "registry:ui", files: [{ path: "badge.tsx", content: "export const Badge = 1" }] }],
+      },
+    }
+    const { layer, jobs } = setup({ fixtures })
+    return Effect.gen(function* () {
+      yield* ingestAll(jobs)
+      const repo = yield* ComponentRepository
+      const badge = Option.getOrThrow(yield* repo.findById(ComponentId.make("inline:badge")))
+      expect(badge.enrichment.doc._tag).toBe("Generated")
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("プレビュービルドは start → poll の 2 段階で進む (Workflow が間で待てる)", () => {
+    const layer = makeInMemoryLayer({ fixtures: baseFixtures(), previewPollsUntilDone: 3 })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const id = ComponentId.make("acme:glow-button")
+      const job = Option.getOrThrow(yield* startPreviewBuild(id))
+      expect(Option.isNone(yield* collectPreviewBuild(id, job))).toBe(true)
+      expect(Option.isNone(yield* collectPreviewBuild(id, job))).toBe(true)
+      expect(Option.getOrThrow(yield* collectPreviewBuild(id, job))._tag).toBe("Done")
+      const repo = yield* ComponentRepository
+      expect(Option.getOrThrow(yield* repo.findById(id)).enrichment.preview._tag).toBe("Built")
     }).pipe(Effect.provide(layer))
   })
 
@@ -250,10 +320,44 @@ describe("enrichment", () => {
     return Effect.gen(function* () {
       const registry = yield* registerRegistry(INDEX, null)
       yield* syncRegistry(registry.id)
-      usage.push({ category: "agent", amount: usd(50), subject: "x", detail: {}, at: 0 } as UsageRecord)
+      usage.push(new UsageRecord({ category: "agent", amount: usd(50), subject: "x", detail: {}, at: 0 }))
       const { plan, outcomes } = yield* enrichComponent(jobs.enrichments[0]!)
       expect(plan.decision._tag).toBe("Defer")
       expect(outcomes).toEqual([])
+    }).pipe(Effect.provide(layer))
+  })
+})
+
+describe("backlog & quotas", () => {
+  it.effect("予算で後回しにされたものを backlog sweeper が拾い直す", () => {
+    const { layer, jobs, usage } = setup()
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      jobs.enrichments.length = 0
+      // ソースは変わっていないので再同期では何も投入されない
+      yield* syncRegistry(registry.id)
+      expect(jobs.enrichments).toEqual([])
+      const swept = yield* scheduleBacklog()
+      expect(swept).toEqual({ scanned: 3, scheduled: 3 })
+      // 予算上限なら何もしない
+      jobs.enrichments.length = 0
+      usage.push(new UsageRecord({ category: "llm", amount: usd(50), subject: "x", detail: {}, at: 0 }))
+      expect(yield* scheduleBacklog()).toEqual({ scanned: 0, scheduled: 0 })
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("ユーザー別の月次アイテム数上限を超える登録は拒否する", () => {
+    const fixtures = baseFixtures()
+    fixtures["https://other.dev/r/registry.json"] = { name: "other", items: [{ name: "x", type: "registry:ui" }, { name: "y", type: "registry:ui" }] }
+    const layer = makeInMemoryLayer({ fixtures, config: { budget: { ...testConfig.budget, maxItemsPerUserPerMonth: 4 } } })
+    return Effect.gen(function* () {
+      const user = UserId.make("u1")
+      yield* registerRegistry(INDEX, user) // 3 items
+      const error = yield* Effect.flip(registerRegistry("https://other.dev/r/registry.json", user)) // +2 > 4
+      expect(error).toMatchObject({ _tag: "UserQuotaExceeded", used: 3, requested: 2, limit: 4 })
+      // 別ユーザーは影響を受けない
+      yield* registerRegistry("https://other.dev/r/registry.json", UserId.make("u2"))
     }).pipe(Effect.provide(layer))
   })
 })
@@ -290,6 +394,8 @@ describe("search & queries", () => {
     const { layer, jobs } = setup()
     return Effect.gen(function* () {
       yield* ingestAll(jobs)
+      const semantic = yield* searchComponents({ _tag: "Text", text: "glowing button", mode: "semantic", filters: {}, limit: 10 })
+      expect(semantic.hits[0]?.sources).toEqual(["semantic"])
       const result = yield* searchComponents({
         _tag: "Text",
         text: "glowing button",

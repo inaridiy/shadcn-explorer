@@ -46,6 +46,8 @@ export class Registry extends Schema.Class<Registry>("Registry")({
   ownerId: Schema.NullOr(UserId),
   status: RegistryStatus,
   createdAt: Timestamp,
+  /** 登録時点の registry.json のアイテム数 (ユーザー別の月次クォータ計算に使う) */
+  declaredItems: Schema.optionalWith(Schema.Number, { default: () => 0 }),
 }) {}
 
 export class IllegalRegistryTransition extends Data.TaggedError("IllegalRegistryTransition")<{

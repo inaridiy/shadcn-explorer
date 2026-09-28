@@ -1,0 +1,29 @@
+{
+  "description": "検索品質のゴールデンセット。registry id はローカル検証で使った @23rd / @8bitcn。relevant は許容解 (どれか 1 つでも上位に来れば MRR が立つ)。",
+  "queries": [
+    { "query": "ascii logo", "relevant": ["23rd:ascii-logo", "23rd:ascii-logo-svelte"], "tags": ["exact-name"] },
+    { "query": "health bar", "relevant": ["8bitcn:health-bar", "8bitcn:enemy-health-display"], "tags": ["exact-name"] },
+    { "query": "color picker", "relevant": ["23rd:gooey-color-picker", "23rd:gooey-color-picker-svelte"], "tags": ["exact-name"] },
+    { "query": "leaderboard", "relevant": ["8bitcn:leaderboard"], "tags": ["exact-name"] },
+    { "query": "otp input", "relevant": ["8bitcn:input-otp"], "tags": ["exact-name"] },
+    { "query": "fire background for a landing hero", "relevant": ["23rd:shader-fire", "23rd:shader-fire-svelte"], "tags": ["descriptive"] },
+    { "query": "animated sky with clouds", "relevant": ["23rd:shader-sky", "23rd:shader-sky-svelte"], "tags": ["descriptive"] },
+    { "query": "starfield warp speed background", "relevant": ["23rd:radiant-lines", "23rd:radiant-lines-svelte"], "tags": ["descriptive", "semantic"] },
+    { "query": "404 page game", "relevant": ["8bitcn:not-found-brick-breaker", "8bitcn:not-found-crate-pusher", "8bitcn:not-found1", "8bitcn:not-found2", "8bitcn:not-found3", "23rd:dithered-404"], "tags": ["descriptive"] },
+    { "query": "save game slots", "relevant": ["8bitcn:save-slots"], "tags": ["descriptive"] },
+    { "query": "footer with rubber band overscroll", "relevant": ["23rd:stretchy-footer", "23rd:stretchy-footer-svelte"], "tags": ["descriptive", "semantic"] },
+    { "query": "pricing plans with monthly yearly switch", "relevant": ["8bitcn:pricing2", "8bitcn:pricing1"], "tags": ["descriptive", "semantic"] },
+    { "query": "eyes that follow the cursor", "relevant": ["23rd:live-orb", "23rd:live-orb-svelte"], "tags": ["semantic"] },
+    { "query": "scroll page tilt perspective effect", "relevant": ["23rd:folio", "23rd:folio-svelte"], "tags": ["semantic"] },
+    { "query": "rpg character stats", "relevant": ["8bitcn:character-sheet", "8bitcn:player-profile-card"], "tags": ["semantic"] },
+    { "query": "retro terminal", "relevant": ["8bitcn:advanced1", "23rd:phosphor-score"], "tags": ["semantic"] },
+    { "query": "ゲームのメインメニュー", "relevant": ["8bitcn:main-menu", "8bitcn:pause-menu"], "tags": ["ja", "semantic"] },
+    { "query": "ドット絵のボタン", "relevant": ["8bitcn:button", "8bitcn:button-group"], "tags": ["ja", "semantic", "visual"] },
+    { "query": "炎のアニメーション背景", "relevant": ["23rd:shader-fire", "23rd:shader-fire-svelte"], "tags": ["ja", "semantic"] },
+    { "query": "かっこいいフッター", "relevant": ["23rd:tangle-footer", "23rd:stretchy-footer", "23rd:tangle-footer-svelte", "23rd:stretchy-footer-svelte", "8bitcn:footer1"], "tags": ["ja", "visual"] },
+    { "query": "pixel art", "relevant": ["8bitcn:chapter-intro", "8bitcn:not-found1", "8bitcn:not-found2", "8bitcn:not-found3", "8bitcn:retro-mode-switcher"], "tags": ["visual"] },
+    { "query": "dark glowing gradient hero", "relevant": ["23rd:shader-gradient", "23rd:shader-gradient-svelte", "23rd:radiant-lines"], "tags": ["visual"] },
+    { "query": "svelte", "relevant": ["23rd:ascii-logo-svelte", "23rd:shader-fire-svelte", "23rd:folio-svelte"], "tags": ["exact-name"] },
+    { "query": "loading spinner", "relevant": ["8bitcn:spinner", "8bitcn:loading-screen"], "tags": ["exact-name"] }
+  ]
+}

@@ -19,8 +19,10 @@
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "shadcn-explorer-media" }],
   // gemini-embedding-2 (1536 dims) によるマルチモーダルベクトル
   "vectorize": [{ "binding": "VISUAL_INDEX", "index_name": "shadcn-explorer-visual" }],
-  // Cloudflare AI Search (BM25 + ベクトルのハイブリッドテキスト検索)
+  // Cloudflare AI Search (任意: TEXT_SEARCH_BACKEND=ai-search のときだけ BM25 に使う)
   "ai_search": [{ "binding": "COMPONENT_SEARCH", "instance_name": "shadcn-explorer" }],
+  // 匿名アクセス (REST 読み取り / MCP) の IP 単位レート制限。API キーがあれば別枠 (Better Auth のキー単位制限)
+  "ratelimits": [{ "name": "ANON_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
   // Browser Rendering (Playwright) でプレビューを撮影
   "browser": { "binding": "BROWSER" },
   // CF-Open-Agents-API を Service Binding で呼ぶ
@@ -30,14 +32,14 @@
     { "name": "shadcn-explorer-sync", "binding": "SYNC_WORKFLOW", "class_name": "SyncRegistryWorkflow" },
     { "name": "shadcn-explorer-enrich", "binding": "ENRICH_WORKFLOW", "class_name": "EnrichBatchWorkflow" }
   ],
-  // 毎日全レジストリを再同期 (差分がなければ AI コストは発生しない)
+  // 毎日: 全レジストリを再同期 (差分がなければ AI コスト 0) + 未完了分 (予算後回し・一時失敗) を拾い直す
   "triggers": { "crons": ["17 3 * * *"] },
 
   "vars": {
     // "cloudflare": 本番構成 / "local": D1 FTS5 + フェイク AI でキー無しに動かす
     "EXPLORER_MODE": "cloudflare",
-    // "ai-search" | "d1" (D1 FTS5 の BM25)
-    "TEXT_SEARCH_BACKEND": "ai-search",
+    // BM25 のバックエンド: "d1" (D1 FTS5, 既定) | "ai-search"
+    "TEXT_SEARCH_BACKEND": "d1",
     "AGENTS_TENANT": "shadcn-explorer",
     // CF-Open-Agents-API のプリセット名 (Agents 側で gpt-6-luna に割り当てる。docs/agents-worker.md)
     "AGENT_PRESET": "codex",
@@ -47,6 +49,7 @@
     "GEMINI_EMBEDDING_DIMENSIONS": "1536",
     "MONTHLY_BUDGET_USD": "100",
     "MAX_ITEMS_PER_REGISTRY": "500",
+    "MAX_ITEMS_PER_USER_PER_MONTH": "1000",
     "ENRICH_PARALLELISM": "4",
     "BETTER_AUTH_URL": "http://localhost:3000"
   }

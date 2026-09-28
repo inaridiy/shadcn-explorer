@@ -1,12 +1,12 @@
 import { Effect, Layer } from "effect"
 import type { ComponentId } from "@shadcn-explorer/core/domain"
-import { SearchBackendError, VisualIndex, type VisualModality } from "@shadcn-explorer/core/ports"
+import { SearchBackendError, VectorIndex, type VectorModality } from "@shadcn-explorer/core/ports"
 import { toVectorizeFilter } from "./ai-search-text-index"
 
-const MODALITIES: ReadonlyArray<VisualModality> = ["doc", "light", "dark"]
+const MODALITIES: ReadonlyArray<VectorModality> = ["doc", "light", "dark"]
 
 /** Vectorize の ID は 64 バイト上限なので、コンポーネント ID をハッシュ化して使う */
-const vectorId = async (componentId: ComponentId, modality: VisualModality) => {
+const vectorId = async (componentId: ComponentId, modality: VectorModality) => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(componentId))
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")
   return `${hex.slice(0, 40)}:${modality}`
@@ -17,10 +17,11 @@ const fail = (reason: unknown) => new SearchBackendError({ backend: "vectorize",
 /**
  * Vectorize (cosine, 1536 次元) によるマルチモーダル検索。
  * 1 コンポーネントにつき doc (テキスト) / light / dark (スクショ) の最大 3 ベクトル。
- * メタデータインデックス: registry_id, kind (wrangler vectorize create-metadata-index)
+ * メタデータインデックス: registry_id, kind, modality (wrangler vectorize create-metadata-index)
+ * modality で絞ることで、意味検索 (doc) とビジュアル検索 (スクショ) を別のランキングとして取り出す。
  */
-export const VectorizeVisualIndex = (index: VectorizeIndex) =>
-  Layer.succeed(VisualIndex, {
+export const VectorizeVectorIndex = (index: VectorizeIndex) =>
+  Layer.succeed(VectorIndex, {
     upsert: (vectors) =>
       Effect.tryPromise({
         try: async () =>
@@ -49,7 +50,7 @@ export const VectorizeVisualIndex = (index: VectorizeIndex) =>
           index.query([...vector], {
             topK: Math.min(limit * 2, 50),
             returnMetadata: "all",
-            filter: toVectorizeFilter(filters),
+            filter: { ...toVectorizeFilter(filters), modality: { $in: [...filters.modalities] } },
           }),
         catch: fail,
       }).pipe(

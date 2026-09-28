@@ -1,4 +1,6 @@
 export * from "./enrich-component.js"
+export * from "./errors.js"
+export * from "./keys.js"
 export * from "./queries.js"
 export * from "./register-registry.js"
 export * from "./resolve-registry.js"

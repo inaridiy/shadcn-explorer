@@ -18,13 +18,14 @@ import {
 import {
   AgentError,
   BlobStore,
-  CodingAgent,
+  DocWriter,
   type ComponentRecord,
   ComponentRepository,
   Embedder,
   ExplorerConfig,
   type IndexFilters,
   JobScheduler,
+  PreviewBuilder,
   PreviewRenderer,
   RegistryFetchError,
   RegistryHttp,
@@ -33,8 +34,8 @@ import {
   type TextDocument,
   UsageLedger,
   type Vector,
-  VisualIndex,
-  type VisualVector,
+  VectorIndex,
+  type ComponentVector,
 } from "../ports/index.js"
 import { Bm25Index, tokenize } from "./bm25.js"
 
@@ -42,18 +43,25 @@ import { Bm25Index, tokenize } from "./bm25.js"
 // Config
 // ---------------------------------------------------------------------------
 
+const GPT_6_LUNA = { inputPerMTok: 0.1, cachedInputPerMTok: 0.01, outputPerMTok: 0.5 }
+
 export const testConfig: Context.Tag.Service<ExplorerConfig> = {
   prices: {
-    agentRunEstimate: usd(0.02),
+    docModel: GPT_6_LUNA,
+    docTokensEstimate: { inputTokens: 12_000, outputTokens: 3_000 },
+    previewModel: GPT_6_LUNA,
+    previewTokensEstimate: { inputTokens: 400_000, cachedInputTokens: 300_000, outputTokens: 20_000 },
+    previewSandboxEstimate: usd(0.01),
     browserPerSecond: usd(0.09 / 3600),
     browserSecondsPerPreview: 6,
     textEmbedding: usd(0.0002),
     imageEmbedding: usd(0.00012),
   },
-  budget: { monthlyLimit: usd(50), softLimitRatio: 0.8, maxItemsPerRegistry: 500 },
+  budget: { monthlyLimit: usd(50), softLimitRatio: 0.8, maxItemsPerRegistry: 500, maxItemsPerUserPerMonth: 1000 },
   enrichment: { maxAttempts: 3, capturePreviews: true },
   directoryUrl: "https://ui.shadcn.com/r/registries.json",
   syncTimeoutMs: 30 * 60 * 1000,
+  previewBuild: { pollIntervalMs: 1000, timeoutMs: 60_000 },
 }
 
 export const ExplorerConfigTest = (overrides: Partial<Context.Tag.Service<ExplorerConfig>> = {}) =>
@@ -173,23 +181,60 @@ export const fakeUsageDoc = (snapshot: ComponentSnapshot): UsageDoc =>
     examples: [{ title: "Default", description: "Basic usage", code: `<${snapshot.title.replace(/\s/g, "")} />` }],
     props: [],
     accessibility: [],
-    agentPrompt: `Use the ${snapshot.name} component from ${snapshot.registryId}.`,
     keywords: [snapshot.name, snapshot.kind, ...snapshot.categories],
   })
 
-export const FakeCodingAgent = (options: { readonly failFor?: ReadonlyArray<string> } = {}) =>
-  Layer.succeed(CodingAgent, {
-    presetName: "fake",
-    generate: ({ snapshot }) =>
+export const FakeDocWriter = (options: { readonly failFor?: ReadonlyArray<string> } = {}) =>
+  Layer.succeed(DocWriter, {
+    model: "fake",
+    write: ({ snapshot }) =>
       options.failFor?.includes(snapshot.name)
-        ? Effect.fail(new AgentError({ reason: `agent failed for ${snapshot.name}`, retryable: false }))
+        ? Effect.fail(new AgentError({ reason: `doc writer failed for ${snapshot.name}`, retryable: false }))
         : Effect.succeed({
             doc: fakeUsageDoc(snapshot),
-            previewHtml: Option.some(
-              `<!doctype html><html><body><div id="preview">${snapshot.title} ${snapshot.description}</div></body></html>`,
-            ),
-            usage: { inputTokens: 1000, outputTokens: 500, durationMs: 1000 },
+            usage: { inputTokens: 10_000, cachedInputTokens: 0, outputTokens: 2_000, durationMs: 1000 },
           }),
+  })
+
+/**
+ * フェイクのプレビュービルダー。`pollsUntilDone` 回目の poll で完了する (Workflow の待機ループを試せる)。
+ * 完成する HTML にはタイトルと説明を入れるので、FakeEmbedder 経由の画像検索も擬似的に効く。
+ */
+export const FakePreviewBuilder = (
+  options: { readonly failFor?: ReadonlyArray<string>; readonly pollsUntilDone?: number; readonly noPreviewFor?: ReadonlyArray<string> } = {},
+) =>
+  Layer.sync(PreviewBuilder, () => {
+    const jobs = new Map<string, { polls: number; html: string | null; name: string }>()
+    let seq = 0
+    return {
+      name: "fake",
+      start: ({ snapshot }) =>
+        options.failFor?.includes(snapshot.name)
+          ? Effect.fail(new AgentError({ reason: `preview build failed for ${snapshot.name}`, retryable: false }))
+          : Effect.sync(() => {
+              const id = `job-${++seq}`
+              jobs.set(id, {
+                polls: 0,
+                name: snapshot.name,
+                html: options.noPreviewFor?.includes(snapshot.name)
+                  ? null
+                  : `<!doctype html><html><body><div id="preview">${snapshot.title} ${snapshot.description}</div></body></html>`,
+              })
+              return { id, startedAt: 0 }
+            }),
+      poll: (job) =>
+        Effect.sync(() => {
+          const j = jobs.get(job.id)!
+          j.polls++
+          if (j.polls < (options.pollsUntilDone ?? 1)) return { _tag: "Running" as const }
+          return {
+            _tag: "Done" as const,
+            html: Option.fromNullable(j.html),
+            usage: { inputTokens: 200_000, cachedInputTokens: 150_000, outputTokens: 10_000, durationMs: 60_000 },
+          }
+        }),
+      cancel: (job) => Effect.sync(() => void jobs.delete(job.id)),
+    }
   })
 
 /** 「PNG」の中身として HTML のテキストを入れる。FakeEmbedder がそれを読んで埋め込むので画像検索も擬似的に動く */
@@ -242,7 +287,7 @@ const cosine = (a: Vector, b: Vector): number => {
   return dot
 }
 
-/** キーワード = 本物の BM25、ベクトル = hashEmbed のコサイン類似度 */
+/** 本物の BM25 */
 export const InMemoryTextSearchIndex = Layer.sync(TextSearchIndex, () => {
   const docs = new Map<ComponentId, TextDocument>()
   const bm25 = new Bm25Index()
@@ -259,33 +304,23 @@ export const InMemoryTextSearchIndex = Layer.sync(TextSearchIndex, () => {
           bm25.remove(id)
         }),
       ),
-    search: (text, retrieval, filters, limit) =>
+    search: (text, filters, limit) =>
       Effect.sync(() => {
         const allowed = (id: string) => {
           const d = docs.get(id as ComponentId)
           return d !== undefined && matchesFilters(d, filters)
         }
-        if (retrieval === "keyword") {
-          return bm25
-            .search(text)
-            .filter((h) => allowed(h.id))
-            .slice(0, limit)
-            .map((h) => h.id as ComponentId)
-        }
-        const q = hashEmbed(text)
-        return [...docs.values()]
-          .filter((d) => matchesFilters(d, filters))
-          .map((d) => ({ id: d.componentId, score: cosine(q, hashEmbed(d.markdown)) }))
-          .filter((h) => h.score > 0)
-          .sort((a, b) => b.score - a.score)
+        return bm25
+          .search(text)
+          .filter((h) => allowed(h.id))
           .slice(0, limit)
-          .map((h) => h.id)
+          .map((h) => h.id as ComponentId)
       }),
   }
 })
 
-export const InMemoryVisualIndex = Layer.sync(VisualIndex, () => {
-  const vectors = new Map<string, VisualVector>()
+export const InMemoryVectorIndex = Layer.sync(VectorIndex, () => {
+  const vectors = new Map<string, ComponentVector>()
   return {
     upsert: (vs) => Effect.sync(() => vs.forEach((v) => vectors.set(`${v.componentId}#${v.modality}`, v))),
     remove: (ids) =>
@@ -296,7 +331,7 @@ export const InMemoryVisualIndex = Layer.sync(VisualIndex, () => {
       Effect.sync(() => {
         const best = new Map<ComponentId, number>()
         for (const v of vectors.values()) {
-          if (!matchesFilters(v, filters)) continue
+          if (!matchesFilters(v, filters) || !filters.modalities.includes(v.modality)) continue
           const s = cosine(vector, v.values)
           if (s > (best.get(v.componentId) ?? 0)) best.set(v.componentId, s)
         }
@@ -341,6 +376,8 @@ export interface InMemoryOptions {
   readonly usage?: Array<UsageRecord>
   readonly config?: Partial<Context.Tag.Service<ExplorerConfig>>
   readonly agentFailFor?: ReadonlyArray<string>
+  readonly previewFailFor?: ReadonlyArray<string>
+  readonly previewPollsUntilDone?: number
   /** 本物の RegistryHttp を使う場合に差し替える */
   readonly http?: Layer.Layer<RegistryHttp>
 }
@@ -351,11 +388,15 @@ export const makeInMemoryLayer = (options: InMemoryOptions = {}) =>
     InMemoryRegistryRepository,
     InMemoryComponentRepository,
     InMemoryBlobStore,
-    FakeCodingAgent(options.agentFailFor ? { failFor: options.agentFailFor } : {}),
+    FakeDocWriter(options.agentFailFor ? { failFor: options.agentFailFor } : {}),
+    FakePreviewBuilder({
+      ...(options.previewFailFor ? { failFor: options.previewFailFor } : {}),
+      ...(options.previewPollsUntilDone ? { pollsUntilDone: options.previewPollsUntilDone } : {}),
+    }),
     FakePreviewRenderer,
     FakeEmbedder,
     InMemoryTextSearchIndex,
-    InMemoryVisualIndex,
+    InMemoryVectorIndex,
     RecordingJobScheduler(options.jobs),
     InMemoryUsageLedger(options.usage),
     ExplorerConfigTest(options.config),

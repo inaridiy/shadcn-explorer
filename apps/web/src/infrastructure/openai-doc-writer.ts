@@ -1,15 +1,13 @@
-import { Effect, Layer, Option, Schedule, Schema } from "effect"
+import { Effect, Layer, Schedule, Schema } from "effect"
 import { UsageDoc } from "@shadcn-explorer/core/domain"
-import { AgentError, type AgentInput, CodingAgent } from "@shadcn-explorer/core/ports"
+import { AgentError, DocWriter, type DocWriterInput } from "@shadcn-explorer/core/ports"
 
 /**
- * OpenAI Responses API を直接呼ぶ軽量なドキュメント生成アダプタ。
- *
- * CF-Open-Agents-API (サンドボックスで実際にビルド・型検査する) が未デプロイの環境向け。
- * ソースを読んで UsageDoc を Structured Outputs で返させるだけなので、プレビュー HTML は作らない
- * (= スクショ無し。ビジュアル検索は doc テキストのベクトルのみになる)。
+ * ドキュメント生成 (DocWriter) の OpenAI Responses API 実装。既定モデルは gpt-6-luna。
+ * registry-item.json (ソース込み) を読ませ、Structured Outputs で UsageDoc を 1 回の呼び出しで返させる。
+ * サンドボックスでのビルドはプレビュー専用 (PreviewBuilder) に分けたので、ここは安く速い経路だけを持つ。
  */
-export interface OpenAIDocAgentOptions {
+export interface OpenAIDocWriterOptions {
   readonly apiKey: string
   readonly model: string
   /** AI Gateway 経由にする場合: https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai */
@@ -23,7 +21,7 @@ const strArray = { type: "array", items: str } as const
 export const usageDocJsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "visualDescription", "whenToUse", "usage", "examples", "props", "accessibility", "agentPrompt", "keywords"],
+  required: ["summary", "visualDescription", "whenToUse", "usage", "examples", "props", "accessibility", "keywords"],
   properties: {
     summary: str,
     visualDescription: str,
@@ -48,7 +46,6 @@ export const usageDocJsonSchema = {
       },
     },
     accessibility: strArray,
-    agentPrompt: str,
     keywords: strArray,
   },
 } as const
@@ -59,7 +56,7 @@ All text in English. Code samples are TSX that would type-check against the sour
 
 const MAX_ITEM_JSON = 80_000
 
-export const buildDocPrompt = (input: AgentInput): string => {
+export const buildDocPrompt = (input: DocWriterInput): string => {
   const itemJson = JSON.stringify(input.itemJson, null, 2)
   return `Document the shadcn registry item "${input.snapshot.name}" (${input.snapshot.kind}) from registry "${input.snapshot.registryId}".
 Install command: ${input.installCommand}
@@ -75,7 +72,6 @@ Fill every field:
 - examples: 2-4 realistic examples; each code is ONLY TSX source without markdown fences.
 - props: from the source's props type (default null when none).
 - accessibility: concrete notes.
-- agentPrompt: a prompt a user pastes into a coding agent to use this item well.
 - keywords: 5-15 search keywords including synonyms (e.g. "cta", "shiny").`
 }
 
@@ -87,7 +83,13 @@ const ResponsesOutput = Schema.Struct({
       content: Schema.optional(Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }))),
     }),
   ),
-  usage: Schema.optional(Schema.Struct({ input_tokens: Schema.Number, output_tokens: Schema.Number })),
+  usage: Schema.optional(
+    Schema.Struct({
+      input_tokens: Schema.Number,
+      output_tokens: Schema.Number,
+      input_tokens_details: Schema.optional(Schema.Struct({ cached_tokens: Schema.optional(Schema.Number) })),
+    }),
+  ),
 })
 
 const outputText = (res: typeof ResponsesOutput.Type) =>
@@ -106,10 +108,13 @@ const normalize = (raw: unknown): unknown => {
   }
 }
 
-export const OpenAIDocAgent = (options: OpenAIDocAgentOptions) => {
+/** モデルがコードフェンス付きで返した場合に剥がす */
+const stripFences = (code: string) => code.replace(/^\s*```[a-z]*\n/i, "").replace(/\n```\s*$/, "").trim()
+
+export const OpenAIDocWriter = (options: OpenAIDocWriterOptions) => {
   const base = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "")
 
-  const generate = (input: AgentInput) =>
+  const write = (input: DocWriterInput) =>
     Effect.gen(function* () {
       const started = Date.now()
       const json = yield* Effect.tryPromise({
@@ -147,15 +152,23 @@ export const OpenAIDocAgent = (options: OpenAIDocAgentOptions) => {
       }).pipe(
         Effect.flatMap((raw) =>
           Schema.decodeUnknown(UsageDoc)(raw).pipe(
+            Effect.map(
+              (doc) =>
+                new UsageDoc({
+                  ...doc,
+                  usage: stripFences(doc.usage),
+                  examples: doc.examples.map((e) => ({ ...e, code: stripFences(e.code) })),
+                }),
+            ),
             Effect.mapError((e) => new AgentError({ reason: `doc is invalid: ${e.message.slice(0, 300)}`, retryable: false })),
           ),
         ),
       )
       return {
         doc,
-        previewHtml: Option.none<string>(),
         usage: {
           inputTokens: res.usage?.input_tokens ?? 0,
+          cachedInputTokens: res.usage?.input_tokens_details?.cached_tokens ?? 0,
           outputTokens: res.usage?.output_tokens ?? 0,
           durationMs: Date.now() - started,
         },
@@ -167,5 +180,5 @@ export const OpenAIDocAgent = (options: OpenAIDocAgentOptions) => {
       }),
     )
 
-  return Layer.succeed(CodingAgent, { presetName: `openai:${options.model}`, generate })
+  return Layer.succeed(DocWriter, { model: `openai:${options.model}`, write })
 }

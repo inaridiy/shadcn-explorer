@@ -1,4 +1,4 @@
-import { Data, Effect, Option } from "effect"
+import { Data, Effect, Either, Option } from "effect"
 import {
   type ComponentId,
   type FusedHit,
@@ -14,9 +14,11 @@ import {
   type ComponentRecord,
   ComponentRepository,
   Embedder,
+  type EmbeddingError,
   type IndexFilters,
+  type SearchBackendError,
   TextSearchIndex,
-  VisualIndex,
+  VectorIndex,
 } from "../ports/index.js"
 
 export class SearchImageNotFound extends Data.TaggedError("SearchImageNotFound")<{
@@ -68,39 +70,58 @@ const hydrate = (hits: ReadonlyArray<FusedHit>, filters: SearchFilters) =>
     })
   })
 
+/**
+ * テキストクエリ。
+ * - keyword : BM25 (D1 FTS5 / AI Search)
+ * - semantic: クエリ埋め込み × ドキュメントベクトル (modality=doc)
+ * - visual  : 同じクエリ埋め込み × スクショベクトル (modality=light/dark)
+ * 埋め込みは 1 回だけ計算して semantic / visual で共有する。
+ */
 const textQuery = (query: Extract<SearchQuery, { _tag: "Text" }>) =>
   Effect.gen(function* () {
     const textIndex = yield* TextSearchIndex
-    const visualIndex = yield* VisualIndex
+    const vectorIndex = yield* VectorIndex
     const embedder = yield* Embedder
     const filters = toIndexFilters(query.filters)
     const fetchLimit = Math.min(query.limit * 2, 50)
+    const backends = sourcesForMode(query.mode)
 
-    const tasks = sourcesForMode(query.mode).map((backend) => {
+    const needsVector = backends.some((b) => b !== "keyword")
+    const embedded = needsVector ? yield* Effect.either(embedder.embedQuery(query.text)) : null
+
+    const tasks = backends.map((backend): Effect.Effect<RankedList, SearchBackendError | EmbeddingError> => {
       switch (backend) {
         case "keyword":
-          return textIndex.search(query.text, "keyword", filters, fetchLimit).pipe(Effect.map((ids) => ranked("keyword", ids)))
+          return textIndex.search(query.text, filters, fetchLimit).pipe(Effect.map((ids) => ranked("keyword", ids)))
         case "semantic":
-          return textIndex.search(query.text, "vector", filters, fetchLimit).pipe(Effect.map((ids) => ranked("semantic", ids)))
-        case "visual":
-          return embedder.embedQuery(query.text).pipe(
-            Effect.flatMap((v) => visualIndex.query(v, filters, fetchLimit)),
-            Effect.map((ids) => ranked("visual-text", ids)),
-          )
+        case "visual": {
+          if (embedded === null) return Effect.succeed(ranked("semantic", []))
+          if (embedded._tag === "Left") return Effect.fail(embedded.left)
+          const modalities = backend === "semantic" ? (["doc"] as const) : (["light", "dark"] as const)
+          return vectorIndex
+            .query(embedded.right, { ...filters, modalities }, fetchLimit)
+            .pipe(Effect.map((ids) => ranked(backend === "semantic" ? "semantic" : "visual-text", ids)))
+        }
       }
     })
-    return yield* Effect.all(tasks.map(Effect.either), { concurrency: "unbounded" })
+    const results = yield* Effect.all(tasks.map(Effect.either), { concurrency: "unbounded" })
+    // 埋め込み失敗は semantic / visual の両方で同じ警告になるので 1 つにまとめる
+    return embedded?._tag === "Left"
+      ? [...results.filter((r) => r._tag === "Right"), Either.left(embedded.left)]
+      : results
   })
 
 const imageQuery = (query: Extract<SearchQuery, { _tag: "Image" }>) =>
   Effect.gen(function* () {
     const blobs = yield* BlobStore
     const embedder = yield* Embedder
-    const visualIndex = yield* VisualIndex
+    const vectorIndex = yield* VectorIndex
     const image = yield* blobs.get(query.imageKey)
     if (Option.isNone(image)) return yield* new SearchImageNotFound({ imageKey: query.imageKey })
     const result = yield* embedder.embedImage(image.value).pipe(
-      Effect.flatMap((v) => visualIndex.query(v, toIndexFilters(query.filters), Math.min(query.limit * 2, 50))),
+      Effect.flatMap((v) =>
+        vectorIndex.query(v, { ...toIndexFilters(query.filters), modalities: ["light", "dark"] }, Math.min(query.limit * 2, 50)),
+      ),
       Effect.map((ids) => ranked("visual-image", ids)),
       Effect.either,
     )

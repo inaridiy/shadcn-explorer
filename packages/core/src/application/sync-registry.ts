@@ -21,9 +21,12 @@ import {
   RegistryFetchError,
   RegistryHttp,
   RegistryRepository,
+  BlobStore,
   TextSearchIndex,
-  VisualIndex,
+  VectorIndex,
 } from "../ports/index.js"
+import { NotRegistryOwner } from "./errors.js"
+import { itemSourceKey } from "./keys.js"
 import { fetchRegistryIndex } from "./resolve-registry.js"
 
 export class RegistryNotFoundById extends Data.TaggedError("RegistryNotFoundById")<{
@@ -89,7 +92,8 @@ export const syncRegistry = (registryId: RegistryId) =>
     const componentRepo = yield* ComponentRepository
     const scheduler = yield* JobScheduler
     const textIndex = yield* TextSearchIndex
-    const visualIndex = yield* VisualIndex
+    const vectorIndex = yield* VectorIndex
+    const blobs = yield* BlobStore
     const { budget } = yield* ExplorerConfig
 
     const registry = yield* beginSync(registryId)
@@ -106,15 +110,20 @@ export const syncRegistry = (registryId: RegistryId) =>
         indexItems,
         (indexItem) =>
           fetchItem(registry, indexItem).pipe(
-            Effect.flatMap(({ item, url }) => toComponentSnapshot(registry.id, item, url)),
+            Effect.flatMap(({ item, url }) =>
+              Effect.map(toComponentSnapshot(registry.id, item, url), (snapshot) => ({ snapshot, item })),
+            ),
             Effect.either,
           ),
         { concurrency: 6 },
       )
       const snapshots: Array<ComponentSnapshot> = []
+      const itemsById = new Map<string, WireRegistryItem>()
       for (const r of results) {
-        if (r._tag === "Right") snapshots.push(r.right)
-        else warnings.push(`${r.left._tag}: ${"url" in r.left ? r.left.url : r.left.name} - ${r.left.reason}`)
+        if (r._tag === "Right") {
+          snapshots.push(r.right.snapshot)
+          itemsById.set(r.right.snapshot.id, r.right.item)
+        } else warnings.push(`${r.left._tag}: ${"url" in r.left ? r.left.url : r.left.name} - ${r.left.reason}`)
       }
       if (indexItems.length > 0 && snapshots.length === 0) {
         return yield* new RegistryFetchError({
@@ -125,11 +134,17 @@ export const syncRegistry = (registryId: RegistryId) =>
 
       const plan = planSync(yield* componentRepo.hashesByRegistry(registry.id), snapshots)
       const toEnrich = needsEnrichment(plan)
+      // 生成時に再取得しないよう、変更分の registry-item.json 原本を保存しておく
+      yield* Effect.forEach(
+        toEnrich,
+        (snap) => blobs.put(itemSourceKey(snap.id, snap.contentHash), JSON.stringify(itemsById.get(snap.id)), "application/json"),
+        { concurrency: 8, discard: true },
+      )
       yield* componentRepo.upsertSnapshots(toEnrich)
       if (plan.removed.length > 0) {
         yield* componentRepo.remove(plan.removed)
         // インデックスの削除失敗は同期全体を失敗させない (次回同期で再試行される)
-        yield* Effect.all([textIndex.remove(plan.removed), visualIndex.remove(plan.removed)], {
+        yield* Effect.all([textIndex.remove(plan.removed), vectorIndex.remove(plan.removed)], {
           concurrency: 2,
           discard: true,
         }).pipe(Effect.catchAll((e) => Effect.sync(() => warnings.push(`index cleanup: ${e.reason}`))))
@@ -184,9 +199,6 @@ export const scheduleResyncAll = Effect.gen(function* () {
   return targets.length
 })
 
-export class NotRegistryOwner extends Data.TaggedError("NotRegistryOwner")<{
-  readonly registryId: RegistryId
-}> {}
 
 /** 手動の再同期要求。登録者 (または所有者なしの公開レジストリ) のみ許可する */
 export const requestResync = (registryId: RegistryId, requester: UserId) =>

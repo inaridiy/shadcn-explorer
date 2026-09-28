@@ -76,7 +76,7 @@ function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>API keys</CardTitle>
-            <CardDescription>Used by the REST API and the MCP server (60 requests / minute per key).</CardDescription>
+            <CardDescription>Optional. Anonymous REST/MCP reads are limited to 30 requests / minute per IP; a key raises it to 60 / minute per key and is required for writes.</CardDescription>
           </CardHeader>
           <CardContent>
             {user ? (
@@ -117,7 +117,8 @@ function SettingsPage() {
           <CardDescription>Tools: search_components, get_component, list_registries</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <CodeBlock title="Claude Code" code={`claude mcp add --transport http shadcn-explorer ${origin}/mcp --header "x-api-key: sce_..."`} />
+          <CodeBlock title="Claude Code" code={`claude mcp add --transport http shadcn-explorer ${origin}/mcp`} />
+          <CodeBlock title="Claude Code (higher limits)" code={`claude mcp add --transport http shadcn-explorer ${origin}/mcp --header "x-api-key: sce_..."`} />
           <CodeBlock
             title=".mcp.json / .cursor/mcp.json"
             code={JSON.stringify({ mcpServers: { "shadcn-explorer": { type: "http", url: `${origin}/mcp`, headers: { "x-api-key": "sce_..." } } } }, null, 2)}

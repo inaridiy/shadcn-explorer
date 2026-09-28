@@ -16,6 +16,13 @@ interface ExplorerSecrets {
   OPENAI_API_KEY?: string
   /** 例: AI Gateway の https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai */
   OPENAI_BASE_URL?: string
+  /** 単価の上書き (USD / 1M tokens)。未設定なら gpt-6-luna の公式価格 */
+  DOC_MODEL_INPUT_USD_PER_MTOK?: string
+  DOC_MODEL_CACHED_INPUT_USD_PER_MTOK?: string
+  DOC_MODEL_OUTPUT_USD_PER_MTOK?: string
+  PREVIEW_MODEL_INPUT_USD_PER_MTOK?: string
+  PREVIEW_MODEL_CACHED_INPUT_USD_PER_MTOK?: string
+  PREVIEW_MODEL_OUTPUT_USD_PER_MTOK?: string
 }
 
 interface Env extends ExplorerSecrets {}

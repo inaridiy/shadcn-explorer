@@ -13,7 +13,7 @@ const isApiPath = (pathname: string) =>
 /**
  * Worker エントリ。
  * - fetch: 外部 API は Hono、それ以外 (SSR + server fn) は TanStack Start
- * - scheduled: 日次で全レジストリを再同期
+ * - scheduled: 日次で全レジストリを再同期 + backlog sweeper
  * - Workflow クラス: 同期・エンリッチメント
  */
 export default {
@@ -23,6 +23,12 @@ export default {
     return handler.fetch(request)
   },
   async scheduled(_controller, _env, ctx) {
-    ctx.waitUntil(runApp(Application.scheduleResyncAll).then((r) => console.log("resync scheduled", r)))
+    ctx.waitUntil(
+      Promise.all([
+        runApp(Application.scheduleResyncAll).then((r) => console.log("resync scheduled", r)),
+        // ソースが変わっていない未完了分 (予算で後回し・一時失敗・後から有効化されたプレビュー) を拾い直す
+        runApp(Application.scheduleBacklog()).then((r) => console.log("backlog scheduled", r)),
+      ]),
+    )
   },
 } satisfies ExportedHandler<Env>

@@ -3,7 +3,8 @@ import type { ComponentId } from "@shadcn-explorer/core/domain"
 import { type IndexFilters, SearchBackendError, TextSearchIndex } from "@shadcn-explorer/core/ports"
 
 /**
- * Cloudflare AI Search (旧 AutoRAG) を使ったテキスト検索。
+ * Cloudflare AI Search (旧 AutoRAG) を使ったキーワード検索 (BM25)。TEXT_SEARCH_BACKEND=ai-search のときの代替実装。
+ * 意味検索は Vectorize の doc ベクトル (gemini-embedding-2) に一本化したので、ここでは keyword retrieval だけを使う。
  * インスタンスは「組み込みストレージ + Items API」で作成し、
  *   index_method: { vector: true, keyword: true }  (ハイブリッド: BM25 + ベクトル)
  *   indexing_options.keyword_tokenizer: "trigram"   (日本語の部分一致)
@@ -44,14 +45,14 @@ export const AiSearchTextIndex = (instance: AiSearchInstance) =>
           }),
         { concurrency: 4, discard: true },
       ),
-    search: (text, retrieval, filters, limit) =>
+    search: (text, filters, limit) =>
       Effect.tryPromise({
         try: () =>
           instance.search({
             query: text,
             ai_search_options: {
               retrieval: {
-                retrieval_type: retrieval,
+                retrieval_type: "keyword",
                 max_num_results: Math.min(limit, 50),
                 keyword_match_mode: "or",
                 filters: toVectorizeFilter(filters),

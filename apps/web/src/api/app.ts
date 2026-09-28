@@ -18,43 +18,57 @@ import { storeSearchImage } from "./uploads"
  *   /media/*     R2 のスクショ・プレビュー配信
  */
 
-type Variables = { userId: string }
+/** userId = null は匿名 (IP 単位のレート制限付きで読み取りのみ許可) */
+type Variables = { userId: string | null }
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => getAuth().handler(c.req.raw))
 
 // ---------------------------------------------------------------------------
-// 認証: x-api-key (外部クライアント / Coding Agent) か、セッション Cookie (同一オリジンの UI)
+// 認証
+//   x-api-key   : 外部クライアント / Coding Agent。キー単位のレート制限 (Better Auth)
+//   セッション  : 同一オリジンの UI
+//   匿名        : 公開データの読み取り (REST GET / MCP) だけ。IP 単位のレート制限 (Workers Rate Limiting)
 // ---------------------------------------------------------------------------
 
 type AuthResult =
-  | { readonly ok: true; readonly userId: string }
+  | { readonly ok: true; readonly userId: string | null }
   | { readonly ok: false; readonly status: 401 | 429; readonly message: string }
 
-const authenticate = async (request: Request): Promise<AuthResult> => {
+const RATE_LIMITED = { ok: false, status: 429, message: "レート制限を超えました。しばらく待ってから再試行してください" } as const
+
+const authenticate = async (request: Request, env: Env): Promise<AuthResult> => {
   const auth = getAuth()
   const key = request.headers.get("x-api-key") ?? request.headers.get("authorization")?.replace(/^Bearer\s+/i, "")
   if (key) {
     const result = await auth.api.verifyApiKey({ body: { key } })
     if (result.valid && result.key) return { ok: true, userId: result.key.referenceId }
     const code = (result.error as { code?: string } | null)?.code
-    return code === "RATE_LIMITED"
-      ? { ok: false, status: 429, message: "レート制限を超えました。しばらく待ってから再試行してください" }
-      : { ok: false, status: 401, message: "API キーが無効です" }
+    return code === "RATE_LIMITED" ? RATE_LIMITED : { ok: false, status: 401, message: "API キーが無効です" }
   }
   const session = await auth.api.getSession({ headers: request.headers })
-  return session ? { ok: true, userId: session.user.id } : { ok: false, status: 401, message: "x-api-key ヘッダーが必要です" }
+  if (session) return { ok: true, userId: session.user.id }
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown"
+  const { success } = await env.ANON_RATE_LIMITER.limit({ key: `anon:${ip}` })
+  return success ? { ok: true, userId: null } : RATE_LIMITED
 }
 
 const v1 = new Hono<{ Bindings: Env; Variables: Variables }>()
 v1.use("*", cors({ origin: "*", allowHeaders: ["x-api-key", "authorization", "content-type"] }))
 v1.use("*", async (c, next) => {
-  const auth = await authenticate(c.req.raw)
+  const auth = await authenticate(c.req.raw, c.env)
   if (!auth.ok) return c.json({ error: { code: auth.status === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: auth.message } }, auth.status)
+  // 書き込み (登録・再生成・画像アップロード) は識別できる利用者のみ
+  if (auth.userId === null && c.req.method !== "GET") {
+    return c.json({ error: { code: "UNAUTHORIZED", message: "この操作には x-api-key またはログインが必要です" } }, 401)
+  }
   c.set("userId", auth.userId)
   return next()
 })
+
+/** 書き込み系ハンドラ用: ミドルウェアで匿名を弾いているので非 null */
+const requireUser = (userId: string | null) => UserId.make(userId ?? "")
 
 /** Effect の結果を HTTP レスポンスに写す */
 const respond = async <A, E extends { readonly _tag: string }>(
@@ -123,7 +137,7 @@ v1.post("/components/:registryId/:name/enrich", (c) =>
   respond(
     Application.requestEnrichment(
       ComponentId.make(`${c.req.param("registryId")}:${c.req.param("name")}`),
-      UserId.make(c.get("userId")),
+      requireUser(c.get("userId")),
     ),
     () => ({ scheduled: true }),
   ),
@@ -138,7 +152,7 @@ v1.get("/registries", (c) =>
 v1.post("/registries", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { url?: unknown }
   if (typeof body.url !== "string") return c.json({ error: { code: "BAD_REQUEST", message: "url is required" } }, 400)
-  return respond(Application.registerRegistry(body.url, UserId.make(c.get("userId"))), (r) => toRegistryDto(r))
+  return respond(Application.registerRegistry(body.url, requireUser(c.get("userId"))), (r) => toRegistryDto(r))
 })
 
 app.route("/api/v1", v1)
@@ -147,8 +161,9 @@ app.route("/api/v1", v1)
 // MCP (Coding Agent から「コンポーネントを探して使う」ためのツール群)
 // ---------------------------------------------------------------------------
 
+// 読み取り専用のツールだけなので匿名でも使える (IP 単位のレート制限)。API キーで上限が上がる
 app.post("/mcp", async (c) => {
-  const auth = await authenticate(c.req.raw)
+  const auth = await authenticate(c.req.raw, c.env)
   if (!auth.ok) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: auth.message } }, auth.status)
   return handleMcp(c.req.raw, new URL(c.req.url).origin)
 })

@@ -4,7 +4,7 @@ import {
   type IndexFilters,
   SearchBackendError,
   TextSearchIndex,
-  VisualIndex,
+  VectorIndex,
 } from "@shadcn-explorer/core/ports"
 import { placeholders } from "./d1"
 
@@ -39,7 +39,7 @@ export const toTrigramQuery = (text: string): string | null => {
   return tokens.length > 0 ? tokens.map((t) => `"${t}"`).join(" OR ") : null
 }
 
-/** D1 FTS5 (bm25) によるキーワード検索。ベクトル検索は持たない (VisualIndex 側の doc ベクトルが担う) */
+/** D1 FTS5 (bm25) によるキーワード検索。既定の TextSearchIndex */
 export const D1FtsTextIndex = (db: D1Database) =>
   Layer.succeed(TextSearchIndex, {
     upsert: (doc) =>
@@ -60,9 +60,9 @@ export const D1FtsTextIndex = (db: D1Database) =>
             try: () => db.prepare(`delete from component_fts where component_id in (${placeholders(ids.length)})`).bind(...ids).run(),
             catch: fail("d1-fts"),
           }).pipe(Effect.asVoid),
-    search: (text, retrieval, filters, limit) => {
+    search: (text, filters, limit) => {
       const match = toTrigramQuery(text)
-      if (retrieval === "vector" || match === null) return Effect.succeed([])
+      if (match === null) return Effect.succeed([])
       const { where, binds } = filterSql(filters)
       return Effect.tryPromise({
         try: () =>
@@ -80,8 +80,8 @@ export const D1FtsTextIndex = (db: D1Database) =>
   })
 
 /** ローカル開発用: D1 に保存したベクトルを総当たりでコサイン類似度検索する */
-export const D1LocalVisualIndex = (db: D1Database) =>
-  Layer.succeed(VisualIndex, {
+export const D1LocalVectorIndex = (db: D1Database) =>
+  Layer.succeed(VectorIndex, {
     upsert: (vectors) =>
       vectors.length === 0
         ? Effect.void
@@ -108,6 +108,8 @@ export const D1LocalVisualIndex = (db: D1Database) =>
           }).pipe(Effect.asVoid),
     query: (vector, filters, limit) => {
       const { where, binds } = filterSql(filters)
+      where.push(`modality in (${placeholders(filters.modalities.length)})`)
+      binds.push(...filters.modalities)
       return Effect.tryPromise({
         try: () =>
           db

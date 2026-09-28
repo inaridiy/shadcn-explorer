@@ -12,7 +12,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "eval:search": "vite-node scripts/eval-search.ts"
   },
   "dependencies": {
     "effect": "^3.22.2"
@@ -20,6 +21,8 @@
   "devDependencies": {
     "@effect/vitest": "^0.30.0",
     "typescript": "5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "vite-node": "^3.2.4",
+    "@types/node": "^22.18.0"
   }
 }

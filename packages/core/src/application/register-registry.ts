@@ -7,6 +7,7 @@ import {
   type UserId,
   estimatePlanCost,
   kindFromWire,
+  monthStart,
   planEnrichment,
   slugifyRegistryName,
   toUsd,
@@ -24,6 +25,22 @@ export class RegistryTooLarge extends Data.TaggedError("RegistryTooLarge")<{
 }> {}
 
 export class RegistryEmpty extends Data.TaggedError("RegistryEmpty")<{}> {}
+
+export class UserQuotaExceeded extends Data.TaggedError("UserQuotaExceeded")<{
+  readonly used: number
+  readonly requested: number
+  readonly limit: number
+}> {}
+
+/** 今月そのユーザーが登録したアイテム数 (登録時点の宣言数で数える) */
+const itemsRegisteredThisMonth = (ownerId: UserId) =>
+  Effect.gen(function* () {
+    const repo = yield* RegistryRepository
+    const now = yield* Clock.currentTimeMillis
+    const since = monthStart(now)
+    const mine = yield* repo.list({ ownerId })
+    return mine.filter((r) => r.createdAt >= since).reduce((sum, r) => sum + r.declaredItems, 0)
+  })
 
 /** 登録前の確認画面に出す情報。コスト見積もりもここで出す。 */
 export interface RegistrationPreview {
@@ -124,6 +141,14 @@ export const registerRegistry = (input: string, ownerId: UserId | null) =>
       })
     }
 
+    if (ownerId !== null) {
+      const used = yield* itemsRegisteredThisMonth(ownerId)
+      const requested = resolved.index.items.length
+      if (used + requested > budget.maxItemsPerUserPerMonth) {
+        return yield* new UserQuotaExceeded({ used, requested, limit: budget.maxItemsPerUserPerMonth })
+      }
+    }
+
     const now = yield* Clock.currentTimeMillis
     const registry = new Registry({
       id: yield* allocateRegistryId(resolved.namespace ?? resolved.index.name),
@@ -134,6 +159,7 @@ export const registerRegistry = (input: string, ownerId: UserId | null) =>
       ownerId,
       status: { _tag: "Pending" },
       createdAt: now,
+      declaredItems: resolved.index.items.length,
     })
     yield* repo.insert(registry)
     yield* scheduler.scheduleSync(registry.id)

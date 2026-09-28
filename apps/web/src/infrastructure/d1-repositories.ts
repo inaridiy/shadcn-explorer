@@ -229,8 +229,10 @@ export const D1UsageLedger = (db: D1Database) =>
     record: (r) =>
       d1("record usage", () =>
         db
-          .prepare(`insert into usage_records (category, amount_micro_usd, subject, detail, at) values (?, ?, ?, ?, ?)`)
-          .bind(r.category, r.amount, r.subject, JSON.stringify(r.detail), r.at)
+          .prepare(
+            `insert into usage_records (category, amount_micro_usd, subject, registry_id, detail, at) values (?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(r.category, r.amount, r.subject, r.registryId, JSON.stringify(r.detail), r.at)
           .run(),
       ).pipe(Effect.asVoid),
     spentSince: (since) =>
@@ -251,4 +253,16 @@ export const usageByCategory = (db: D1Database, since: number) =>
       )
       .bind(since)
       .all<{ category: string; total: number; n: number }>(),
+  ).pipe(Effect.map(({ results }) => results))
+
+/** 管理画面向け: レジストリ別の当月コスト (上位) */
+export const usageByRegistry = (db: D1Database, since: number, limit = 10) =>
+  d1("usage by registry", () =>
+    db
+      .prepare(
+        `select registry_id, sum(amount_micro_usd) as total, count(*) as n from usage_records
+         where at >= ? and registry_id is not null group by registry_id order by total desc limit ?`,
+      )
+      .bind(since, limit)
+      .all<{ registry_id: string; total: number; n: number }>(),
   ).pipe(Effect.map(({ results }) => results))

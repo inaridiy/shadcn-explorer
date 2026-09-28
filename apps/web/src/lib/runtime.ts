@@ -102,6 +102,12 @@ export const describeError = (error: { readonly _tag: string } & Record<string, 
       return { code: error._tag, message: `アイテム数 ${String(error.itemCount)} が上限 ${String(error.limit)} を超えています`, status: 422 }
     case "RegistryEmpty":
       return { code: error._tag, message: "レジストリにアイテムがありません", status: 422 }
+    case "UserQuotaExceeded":
+      return {
+        code: error._tag,
+        message: `今月の登録上限を超えます (使用済み ${String(error.used)} + 今回 ${String(error.requested)} > 上限 ${String(error.limit)} アイテム)`,
+        status: 429,
+      }
     case "NotRegistryOwner":
       return { code: error._tag, message: "登録者のみ実行できます", status: 403 }
     case "RegistryNotFoundById":

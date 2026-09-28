@@ -130,26 +130,62 @@ export class BlobStore extends Context.Tag("@shadcn-explorer/BlobStore")<
 // AI / レンダリング
 // ---------------------------------------------------------------------------
 
-export interface AgentInput {
+export interface DocWriterInput {
   readonly snapshot: ComponentSnapshot
-  /** registry-item.json そのもの (ファイル内容込み)。Agent がソースを読んで使い方を書く */
+  /** registry-item.json そのもの (ファイル内容込み)。LLM がソースを読んで使い方を書く */
   readonly itemJson: unknown
   readonly installCommand: string
 }
 
-export interface AgentOutput {
-  readonly doc: UsageDoc
-  /** 依存を全てバンドル済みの自己完結 HTML。スクショと iframe プレビューに使う */
-  readonly previewHtml: Option.Option<string>
-  readonly usage: { readonly inputTokens: number; readonly outputTokens: number; readonly durationMs: number }
+export interface LlmUsage {
+  readonly inputTokens: number
+  readonly cachedInputTokens: number
+  readonly outputTokens: number
+  readonly durationMs: number
 }
 
-/** Coding Agent (CF-Open-Agents-API) による使い方ドキュメント + プレビュー生成 */
-export class CodingAgent extends Context.Tag("@shadcn-explorer/CodingAgent")<
-  CodingAgent,
+/** 使い方ドキュメントの生成 (LLM 1 回呼び出し。既定 gpt-6-luna) */
+export class DocWriter extends Context.Tag("@shadcn-explorer/DocWriter")<
+  DocWriter,
   {
-    readonly presetName: string
-    readonly generate: (input: AgentInput) => Effect.Effect<AgentOutput, AgentError>
+    /** 例: "openai:gpt-6-luna" */
+    readonly model: string
+    readonly write: (input: DocWriterInput) => Effect.Effect<{ readonly doc: UsageDoc; readonly usage: LlmUsage }, AgentError>
+  }
+>() {}
+
+export interface PreviewBuildInput extends DocWriterInput {
+  /** 生成済みのドキュメント (デモ実装のヒント) */
+  readonly doc: Option.Option<UsageDoc>
+}
+
+/** 実行中のプレビュービルドへのハンドル (Workflow のステップ間で受け渡すのでプレーンな値) */
+export interface PreviewJob {
+  readonly id: string
+  readonly startedAt: number
+}
+
+export type PreviewPoll =
+  | { readonly _tag: "Running" }
+  | {
+      readonly _tag: "Done"
+      /** None = ビルダーがプレビュー不要と判断した */
+      readonly html: Option.Option<string>
+      readonly usage: LlmUsage
+    }
+
+/**
+ * プレビュー HTML のビルド (サンドボックスの Coding Agent。CF-Open-Agents-API)。
+ * 数分かかるので start / poll の 2 段階にし、Workflow が step.sleep で耐久的に待てるようにする。
+ */
+export class PreviewBuilder extends Context.Tag("@shadcn-explorer/PreviewBuilder")<
+  PreviewBuilder,
+  {
+    readonly name: string
+    readonly start: (input: PreviewBuildInput) => Effect.Effect<PreviewJob, AgentError>
+    readonly poll: (job: PreviewJob) => Effect.Effect<PreviewPoll, AgentError>
+    /** 打ち切り時の後始末 (セッション削除など)。失敗しても無視してよい */
+    readonly cancel: (job: PreviewJob) => Effect.Effect<void>
   }
 >() {}
 
@@ -203,7 +239,7 @@ export interface TextDocument {
   readonly markdown: string
 }
 
-/** テキスト検索 (Cloudflare AI Search: BM25 + ベクトル) */
+/** キーワード検索 (BM25)。既定は D1 FTS5、代替に Cloudflare AI Search */
 export class TextSearchIndex extends Context.Tag("@shadcn-explorer/TextSearchIndex")<
   TextSearchIndex,
   {
@@ -211,32 +247,37 @@ export class TextSearchIndex extends Context.Tag("@shadcn-explorer/TextSearchInd
     readonly remove: (ids: ReadonlyArray<ComponentId>) => Effect.Effect<void, SearchBackendError>
     readonly search: (
       text: string,
-      retrieval: "keyword" | "vector",
       filters: IndexFilters,
       limit: number,
     ) => Effect.Effect<ReadonlyArray<ComponentId>, SearchBackendError>
   }
 >() {}
 
-export type VisualModality = "doc" | "light" | "dark"
+/** doc = ドキュメントのテキスト、light / dark = スクショ */
+export type VectorModality = "doc" | "light" | "dark"
 
-export interface VisualVector {
+export interface ComponentVector {
   readonly componentId: ComponentId
   readonly registryId: RegistryId
   readonly kind: ComponentKind
-  readonly modality: VisualModality
+  readonly modality: VectorModality
   readonly values: Vector
 }
 
-/** マルチモーダルベクトル検索 (Vectorize + gemini-embedding-2) */
-export class VisualIndex extends Context.Tag("@shadcn-explorer/VisualIndex")<
-  VisualIndex,
+export interface VectorFilters extends IndexFilters {
+  /** 検索対象のモダリティ。意味検索は doc、ビジュアル検索は light/dark に絞る (modality gap 対策) */
+  readonly modalities: ReadonlyArray<VectorModality>
+}
+
+/** マルチモーダルベクトル検索 (Vectorize + gemini-embedding-2)。テキストと画像が同じ空間に入る */
+export class VectorIndex extends Context.Tag("@shadcn-explorer/VectorIndex")<
+  VectorIndex,
   {
-    readonly upsert: (vectors: ReadonlyArray<VisualVector>) => Effect.Effect<void, SearchBackendError>
+    readonly upsert: (vectors: ReadonlyArray<ComponentVector>) => Effect.Effect<void, SearchBackendError>
     readonly remove: (ids: ReadonlyArray<ComponentId>) => Effect.Effect<void, SearchBackendError>
     readonly query: (
       vector: Vector,
-      filters: IndexFilters,
+      filters: VectorFilters,
       limit: number,
     ) => Effect.Effect<ReadonlyArray<ComponentId>, SearchBackendError>
   }
@@ -273,5 +314,7 @@ export class ExplorerConfig extends Context.Tag("@shadcn-explorer/ExplorerConfig
     readonly directoryUrl: string
     /** Syncing のまま放置されたとみなす時間 */
     readonly syncTimeoutMs: number
+    /** プレビュービルドのポーリング間隔と打ち切り時間 */
+    readonly previewBuild: { readonly pollIntervalMs: number; readonly timeoutMs: number }
   }
 >() {}

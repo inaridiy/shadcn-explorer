@@ -100,9 +100,15 @@ importers:
       '@effect/vitest':
         specifier: ^0.30.0
         version: 0.30.0(effect@3.22.2)(vitest@3.2.7(@types/node@22.20.4)(jiti@2.7.0)(lightningcss@1.33.0))
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.20.4
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      vite-node:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.20.4)(jiti@2.7.0)(lightningcss@1.33.0)
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.4)(jiti@2.7.0)(lightningcss@1.33.0)
