@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types src/worker-configuration.d.ts --strict-vars=false",
-    "db:migrate:local": "wrangler d1 migrations apply shadcn-explorer --local",
-    "db:migrate:remote": "wrangler d1 migrations apply shadcn-explorer --remote",
+    "db:migrate:local": "wrangler d1 migrations apply shadcn-explorer-v2 --local",
+    "db:migrate:remote": "wrangler d1 migrations apply shadcn-explorer-v2 --remote",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

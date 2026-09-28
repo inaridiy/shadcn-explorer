@@ -329,12 +329,12 @@ pnpm db:migrate:local && pnpm dev               # http://localhost:3000
 pnpm -r test                                     # core の単体テスト
 
 # 本番リソース
-wrangler d1 create shadcn-explorer
-wrangler r2 bucket create shadcn-explorer-media
-wrangler vectorize create shadcn-explorer-visual --dimensions=1536 --metric=cosine
-wrangler vectorize create-metadata-index shadcn-explorer-visual --property-name=registry_id --type=string
-wrangler vectorize create-metadata-index shadcn-explorer-visual --property-name=kind --type=string
-wrangler vectorize create-metadata-index shadcn-explorer-visual --property-name=modality --type=string
+wrangler d1 create shadcn-explorer-v2
+wrangler r2 bucket create shadcn-explorer-v2-media
+wrangler vectorize create shadcn-explorer-v2-visual --dimensions=1536 --metric=cosine
+wrangler vectorize create-metadata-index shadcn-explorer-v2-visual --property-name=registry_id --type=string
+wrangler vectorize create-metadata-index shadcn-explorer-v2-visual --property-name=kind --type=string
+wrangler vectorize create-metadata-index shadcn-explorer-v2-visual --property-name=modality --type=string
 # (任意) TEXT_SEARCH_BACKEND=ai-search にする場合だけ AI Search インスタンス "shadcn-explorer" を作る:
 #   組み込みストレージ、index_method {keyword}、trigram、custom_metadata: component_id, registry_id, kind
 wrangler secret put BETTER_AUTH_SECRET   # 以下同様: OPENAI_API_KEY GEMINI_API_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET

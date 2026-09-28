@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "shadcn-explorer",
+  "name": "shadcn-explorer-v2",
   // TanStack Start のハンドラに加え、Workflow / cron を同じ Worker から export する
   "main": "src/server.ts",
   "compatibility_date": "2026-09-20",
@@ -10,23 +10,24 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "shadcn-explorer",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "shadcn-explorer-v2",
+      "database_id": "d45e847e-2474-4908-9d12-e4fa5152c488",
       "migrations_dir": "migrations"
     }
   ],
   // スクショ・プレビュー HTML・画像検索のアップロード
-  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "shadcn-explorer-media" }],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "shadcn-explorer-v2-media" }],
   // gemini-embedding-2 (1536 dims) によるマルチモーダルベクトル
-  "vectorize": [{ "binding": "VISUAL_INDEX", "index_name": "shadcn-explorer-visual" }],
+  "vectorize": [{ "binding": "VISUAL_INDEX", "index_name": "shadcn-explorer-v2-visual" }],
   // Cloudflare AI Search (任意: TEXT_SEARCH_BACKEND=ai-search のときだけ BM25 に使う)
-  "ai_search": [{ "binding": "COMPONENT_SEARCH", "instance_name": "shadcn-explorer" }],
+  // インスタンス未作成のため無効。使うときはインスタンスを作ってからコメントを外す
+  // "ai_search": [{ "binding": "COMPONENT_SEARCH", "instance_name": "shadcn-explorer" }],
   // 匿名アクセス (REST 読み取り / MCP) の IP 単位レート制限。API キーがあれば別枠 (Better Auth のキー単位制限)
   "ratelimits": [{ "name": "ANON_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
   // Browser Rendering (Playwright) でプレビューを撮影
   "browser": { "binding": "BROWSER" },
-  // CF-Open-Agents-API を Service Binding で呼ぶ
-  "services": [{ "binding": "AGENTS", "service": "cf-open-agents-api" }],
+  // CF-Open-Agents-API (デプロイ名 my-agents) の Agents エントリポイントを Service Binding で呼ぶ
+  "services": [{ "binding": "AGENTS", "service": "my-agents", "entrypoint": "Agents" }],
 
   "workflows": [
     { "name": "shadcn-explorer-sync", "binding": "SYNC_WORKFLOW", "class_name": "SyncRegistryWorkflow" },
@@ -51,7 +52,7 @@
     "MAX_ITEMS_PER_REGISTRY": "500",
     "MAX_ITEMS_PER_USER_PER_MONTH": "1000",
     "ENRICH_PARALLELISM": "4",
-    "BETTER_AUTH_URL": "http://localhost:3000"
+    "BETTER_AUTH_URL": "https://shadcn-explorer-v2.inaridiy.workers.dev"
   }
   // Secrets (wrangler secret put):
   //   BETTER_AUTH_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
