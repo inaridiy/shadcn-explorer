@@ -27,6 +27,10 @@ describe("D1 FTS5 trigram query", () => {
     expect(toTrigramQuery('glow "btn" OR ボタン ab')).toBe('"glow" OR "btn" OR "ボタン"')
     expect(toTrigramQuery("a b")).toBeNull()
   })
+
+  it("空白の無い日本語は 3 文字の窓に分けて部分一致させる", () => {
+    expect(toTrigramQuery("ドット絵のボタン")).toBe('"ドット" OR "ット絵" OR "ト絵の" OR "絵のボ" OR "のボタ" OR "ボタン"')
+  })
 })
 
 describe("agent markdown", () => {

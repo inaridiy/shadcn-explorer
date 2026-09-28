@@ -25,18 +25,28 @@ const filterSql = (filters: IndexFilters) => {
   return { where, binds }
 }
 
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/
+
+/** 日本語など空白で区切られない語は、3 文字の窓に分けて部分一致させる ("ドット絵のボタン" → ドット, ット絵, …, ボタン) */
+const trigramWindows = (token: string): Array<string> => {
+  const chars = [...token]
+  if (!CJK.test(token) || chars.length <= 3) return [token]
+  return Array.from({ length: chars.length - 2 }, (_, i) => chars.slice(i, i + 3).join(""))
+}
+
 /**
  * trigram トークナイザ用の MATCH クエリ。3 文字未満の語は trigram で引けないので落とす。
- * ユーザー入力の FTS 演算子は全てフレーズ化して無効化する。
+ * ユーザー入力の FTS 演算子は全てフレーズ化して無効化し、各語を OR で繋ぐ (BM25 が一致数で順位付けする)。
  */
 export const toTrigramQuery = (text: string): string | null => {
   const tokens = text
     .normalize("NFKC")
-    .split(/[\s　]+/)
+    .split(/[\s\u3000]+/)
     .map((t) => t.replace(/"/g, "").trim())
+    .flatMap(trigramWindows)
     .filter((t) => [...t].length >= 3)
-    .slice(0, 12)
-  return tokens.length > 0 ? tokens.map((t) => `"${t}"`).join(" OR ") : null
+  const unique = [...new Set(tokens)].slice(0, 24)
+  return unique.length > 0 ? unique.map((t) => `"${t}"`).join(" OR ") : null
 }
 
 /** D1 FTS5 (bm25) によるキーワード検索。既定の TextSearchIndex */
