@@ -15,12 +15,29 @@ const runInlineJob = (job: InlineJob): Effect.Effect<void, unknown, AppServices>
     ? Application.syncRegistry(job.registryId).pipe(Effect.asVoid)
     : Effect.forEach(job.componentIds, (id) => Application.enrichComponent(id), { discard: true })
 
-const dispatch = (job: InlineJob) => {
-  waitUntil(
-    getRuntime()
+/**
+ * ローカル開発用のインラインジョブキュー。
+ * workerd ではリクエストの waitUntil が全て解決した後に登録された I/O は完了しないため、
+ * ジョブ内から投入された後続ジョブ (同期 → エンリッチ) も同じ drain ループ (= 同じ waitUntil) で処理する。
+ */
+const queue: Array<InlineJob> = []
+let draining: Promise<void> | null = null
+
+const drain = async () => {
+  for (let job = queue.shift(); job; job = queue.shift()) {
+    await getRuntime()
       .runPromise(runInlineJob(job).pipe(Effect.catchAllCause((c) => Effect.logError("inline job failed", c))))
-      .catch(() => undefined),
-  )
+      .catch(() => undefined)
+  }
+  draining = null
+}
+
+const dispatch = (job: InlineJob) => {
+  queue.push(job)
+  if (draining === null) {
+    draining = drain()
+    waitUntil(draining)
+  }
 }
 
 export const getRuntime = () => (runtime ??= ManagedRuntime.make(makeAppLayer(env, dispatch)))

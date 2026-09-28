@@ -40,7 +40,7 @@ const unconfiguredRenderer = Layer.succeed(PreviewRenderer, {
 })
 
 const agentLayer = (env: Env, mode: ExplorerMode) => {
-  const transport = makeAgentsTransport(env)
+  const transport = makeAgentsTransport(env, mode === "cloudflare")
   if (transport) return AgentsCodingAgent({ transport, preset: env.AGENT_PRESET })
   return mode === "local" ? FakeCodingAgent() : unconfiguredAgent
 }

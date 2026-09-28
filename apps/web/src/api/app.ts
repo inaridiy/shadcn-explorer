@@ -28,23 +28,31 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => getAuth().handler(c.req.raw))
 // 認証: x-api-key (外部クライアント / Coding Agent) か、セッション Cookie (同一オリジンの UI)
 // ---------------------------------------------------------------------------
 
-const authenticate = async (request: Request): Promise<string | null> => {
+type AuthResult =
+  | { readonly ok: true; readonly userId: string }
+  | { readonly ok: false; readonly status: 401 | 429; readonly message: string }
+
+const authenticate = async (request: Request): Promise<AuthResult> => {
   const auth = getAuth()
   const key = request.headers.get("x-api-key") ?? request.headers.get("authorization")?.replace(/^Bearer\s+/i, "")
   if (key) {
     const result = await auth.api.verifyApiKey({ body: { key } })
-    return result.valid && result.key ? result.key.referenceId : null
+    if (result.valid && result.key) return { ok: true, userId: result.key.referenceId }
+    const code = (result.error as { code?: string } | null)?.code
+    return code === "RATE_LIMITED"
+      ? { ok: false, status: 429, message: "レート制限を超えました。しばらく待ってから再試行してください" }
+      : { ok: false, status: 401, message: "API キーが無効です" }
   }
   const session = await auth.api.getSession({ headers: request.headers })
-  return session?.user.id ?? null
+  return session ? { ok: true, userId: session.user.id } : { ok: false, status: 401, message: "x-api-key ヘッダーが必要です" }
 }
 
 const v1 = new Hono<{ Bindings: Env; Variables: Variables }>()
 v1.use("*", cors({ origin: "*", allowHeaders: ["x-api-key", "authorization", "content-type"] }))
 v1.use("*", async (c, next) => {
-  const userId = await authenticate(c.req.raw)
-  if (!userId) return c.json({ error: { code: "UNAUTHORIZED", message: "x-api-key ヘッダーが必要です" } }, 401)
-  c.set("userId", userId)
+  const auth = await authenticate(c.req.raw)
+  if (!auth.ok) return c.json({ error: { code: auth.status === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: auth.message } }, auth.status)
+  c.set("userId", auth.userId)
   return next()
 })
 
@@ -129,8 +137,8 @@ app.route("/api/v1", v1)
 // ---------------------------------------------------------------------------
 
 app.post("/mcp", async (c) => {
-  const userId = await authenticate(c.req.raw)
-  if (!userId) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "x-api-key required" } }, 401)
+  const auth = await authenticate(c.req.raw)
+  if (!auth.ok) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: auth.message } }, auth.status)
   return handleMcp(c.req.raw, new URL(c.req.url).origin)
 })
 app.get("/mcp", (c) => c.body(null, 405, { allow: "POST" }))

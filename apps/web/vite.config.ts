@@ -8,5 +8,14 @@ import { defineConfig } from "vite"
 export default defineConfig({
   server: { port: 3000 },
   resolve: { alias: { "~": fileURLToPath(new URL("./src", import.meta.url)) } },
-  plugins: [cloudflare({ viteEnvironment: { name: "ssr" } }), tailwindcss(), tanstackStart(), viteReact()],
+  plugins: [
+    cloudflare({
+      viteEnvironment: { name: "ssr" },
+      // AI Search / Vectorize などはリモートにしか無い。EXPLORER_MODE=local の開発ではアカウント無しで動かす
+      remoteBindings: process.env.CF_REMOTE_BINDINGS === "true",
+    }),
+    tailwindcss(),
+    tanstackStart(),
+    viteReact(),
+  ],
 })

@@ -15,10 +15,14 @@ export type AgentsTransport = (path: string, init?: RequestInit) => Promise<Resp
 
 const BASE = "https://agents.internal/v1"
 
-/** Service Binding (fetchAs RPC: トークン不要) → 公開 URL + Bearer の順で使う */
-export const makeAgentsTransport = (env: Env): AgentsTransport | null => {
+/**
+ * Service Binding (fetchAs RPC: トークン不要) → 公開 URL + Bearer の順で使う。
+ * ローカルでは未起動の Worker へのバインディングもスタブとして存在する (RPC スタブは任意のメソッドを持つ) ので、
+ * useBinding=false のときは使わない。
+ */
+export const makeAgentsTransport = (env: Env, useBinding: boolean): AgentsTransport | null => {
   const binding = env.AGENTS as (Fetcher & { fetchAs?: (tenant: string, req: Request) => Promise<Response> }) | undefined
-  if (binding?.fetchAs) {
+  if (useBinding && binding?.fetchAs) {
     return (path, init) => binding.fetchAs!(env.AGENTS_TENANT, new Request(`${BASE}${path}`, init))
   }
   if (env.AGENTS_API_URL && env.AGENTS_API_TOKEN) {
