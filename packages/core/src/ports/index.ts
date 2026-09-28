@@ -158,11 +158,20 @@ export type ColorScheme = "light" | "dark"
 export class PreviewRenderer extends Context.Tag("@shadcn-explorer/PreviewRenderer")<
   PreviewRenderer,
   {
-    /** HTML をヘッドレスブラウザで描画し PNG を返す */
+    /**
+     * HTML をヘッドレスブラウザで描画し、配色ごとの PNG を返す。
+     * ブラウザ起動が課金・レイテンシの大半を占めるので、1 セッションで全配色を撮る。
+     */
     readonly capture: (
       html: string,
-      scheme: ColorScheme,
-    ) => Effect.Effect<{ readonly png: Uint8Array; readonly durationMs: number }, RenderError>
+      schemes: ReadonlyArray<ColorScheme>,
+    ) => Effect.Effect<
+      {
+        readonly shots: ReadonlyArray<{ readonly scheme: ColorScheme; readonly png: Uint8Array }>
+        readonly durationMs: number
+      },
+      RenderError
+    >
   }
 >() {}
 

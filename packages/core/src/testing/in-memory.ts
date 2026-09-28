@@ -194,10 +194,13 @@ export const FakeCodingAgent = (options: { readonly failFor?: ReadonlyArray<stri
 
 /** 「PNG」の中身として HTML のテキストを入れる。FakeEmbedder がそれを読んで埋め込むので画像検索も擬似的に動く */
 export const FakePreviewRenderer = Layer.succeed(PreviewRenderer, {
-  capture: (html, scheme) =>
+  capture: (html, schemes) =>
     Effect.succeed({
-      png: new TextEncoder().encode(`${scheme}:${html.replace(/<[^>]+>/g, " ")}`),
-      durationMs: 3000,
+      shots: schemes.map((scheme) => ({
+        scheme,
+        png: new TextEncoder().encode(`${scheme}:${html.replace(/<[^>]+>/g, " ")}`),
+      })),
+      durationMs: 3000 * schemes.length,
     }),
 })
 

@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shadcn-explorer",
+  // TanStack Start のハンドラに加え、Workflow / cron を同じ Worker から export する
+  "main": "src/server.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "shadcn-explorer",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // スクショ・プレビュー HTML・画像検索のアップロード
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "shadcn-explorer-media" }],
+  // gemini-embedding-2 (1536 dims) によるマルチモーダルベクトル
+  "vectorize": [{ "binding": "VISUAL_INDEX", "index_name": "shadcn-explorer-visual" }],
+  // Cloudflare AI Search (BM25 + ベクトルのハイブリッドテキスト検索)
+  "ai_search": [{ "binding": "COMPONENT_SEARCH", "instance_name": "shadcn-explorer" }],
+  // Browser Rendering (Playwright) でプレビューを撮影
+  "browser": { "binding": "BROWSER" },
+  // CF-Open-Agents-API を Service Binding で呼ぶ
+  "services": [{ "binding": "AGENTS", "service": "cf-open-agents-api" }],
+
+  "workflows": [
+    { "name": "shadcn-explorer-sync", "binding": "SYNC_WORKFLOW", "class_name": "SyncRegistryWorkflow" },
+    { "name": "shadcn-explorer-enrich", "binding": "ENRICH_WORKFLOW", "class_name": "EnrichBatchWorkflow" }
+  ],
+  // 毎日全レジストリを再同期 (差分がなければ AI コストは発生しない)
+  "triggers": { "crons": ["17 3 * * *"] },
+
+  "vars": {
+    // "cloudflare": 本番構成 / "local": D1 FTS5 + フェイク AI でキー無しに動かす
+    "EXPLORER_MODE": "cloudflare",
+    // "ai-search" | "d1" (D1 FTS5 の BM25)
+    "TEXT_SEARCH_BACKEND": "ai-search",
+    "AGENTS_TENANT": "shadcn-explorer",
+    "AGENT_PRESET": "codex",
+    "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2",
+    "GEMINI_EMBEDDING_DIMENSIONS": "1536",
+    "MONTHLY_BUDGET_USD": "100",
+    "MAX_ITEMS_PER_REGISTRY": "500",
+    "ENRICH_PARALLELISM": "4",
+    "BETTER_AUTH_URL": "http://localhost:3000"
+  }
+  // Secrets (wrangler secret put):
+  //   BETTER_AUTH_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
+  //   GEMINI_API_KEY, AI_GATEWAY_BASE_URL (任意), AGENTS_API_URL/AGENTS_API_TOKEN (Service Binding を使わない場合)
+}

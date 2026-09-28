@@ -191,15 +191,15 @@ const capturePreview = (record: ComponentRecord) =>
     }
     const source = new TextDecoder().decode(html.value)
 
-    const shots = yield* Effect.forEach(
-      ["light", "dark"] as const,
-      (scheme) =>
-        renderer.capture(source, scheme).pipe(
-          Effect.tap(({ png }) => blobs.put(screenshotKey(snapshot.id, hash, scheme), png, "image/png")),
-          Effect.map(({ durationMs }) => durationMs),
-        ),
-      { concurrency: 1 },
-    ).pipe(Effect.either)
+    const shots = yield* renderer.capture(source, ["light", "dark"]).pipe(
+      Effect.tap(({ shots }) =>
+        Effect.forEach(shots, ({ scheme, png }) => blobs.put(screenshotKey(snapshot.id, hash, scheme), png, "image/png"), {
+          concurrency: 2,
+          discard: true,
+        }),
+      ),
+      Effect.either,
+    )
     const now = yield* Clock.currentTimeMillis
 
     if (shots._tag === "Left") {
@@ -210,13 +210,14 @@ const capturePreview = (record: ComponentRecord) =>
       return StepOutcome.Failed({ error })
     }
 
-    const seconds = shots.right.reduce((a, b) => a + b, 0) / 1000
+    const seconds = shots.right.durationMs / 1000
+    const has = (scheme: ColorScheme) => shots.right.shots.some((s) => s.scheme === scheme)
     yield* saveState(snapshot.id, {
       preview: {
         _tag: "Captured",
         sourceHash: hash,
         lightKey: screenshotKey(snapshot.id, hash, "light"),
-        darkKey: screenshotKey(snapshot.id, hash, "dark"),
+        darkKey: has("dark") ? screenshotKey(snapshot.id, hash, "dark") : null,
         htmlKey: previewHtmlKey(snapshot.id, hash),
         capturedAt: now,
       },

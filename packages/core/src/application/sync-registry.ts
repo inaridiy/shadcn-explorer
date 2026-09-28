@@ -3,6 +3,7 @@ import {
   type ComponentSnapshot,
   type Registry,
   type RegistryId,
+  type UserId,
   type WireRegistryItem,
   WireRegistryItem as WireRegistryItemSchema,
   completeSync,
@@ -164,4 +165,38 @@ export const syncRegistry = (registryId: RegistryId) =>
         }),
       ),
     )
+  })
+
+/** cron から呼ばれる: 同期可能な全レジストリの再同期を投入する (差分がなければ AI コストは発生しない) */
+export const scheduleResyncAll = Effect.gen(function* () {
+  const repo = yield* RegistryRepository
+  const scheduler = yield* JobScheduler
+  const { syncTimeoutMs } = yield* ExplorerConfig
+  const now = yield* Clock.currentTimeMillis
+  const targets = (yield* repo.list()).filter(
+    (r) =>
+      r.status._tag === "Active" ||
+      r.status._tag === "Failed" ||
+      r.status._tag === "Pending" ||
+      isStaleSync(r, now, syncTimeoutMs),
+  )
+  yield* Effect.forEach(targets, (r) => scheduler.scheduleSync(r.id), { discard: true })
+  return targets.length
+})
+
+export class NotRegistryOwner extends Data.TaggedError("NotRegistryOwner")<{
+  readonly registryId: RegistryId
+}> {}
+
+/** 手動の再同期要求。登録者 (または所有者なしの公開レジストリ) のみ許可する */
+export const requestResync = (registryId: RegistryId, requester: UserId) =>
+  Effect.gen(function* () {
+    const repo = yield* RegistryRepository
+    const scheduler = yield* JobScheduler
+    const registry = yield* repo.findById(registryId)
+    if (Option.isNone(registry)) return yield* new RegistryNotFoundById({ registryId })
+    if (registry.value.ownerId !== null && registry.value.ownerId !== requester) {
+      return yield* new NotRegistryOwner({ registryId })
+    }
+    yield* scheduler.scheduleSync(registryId)
   })
