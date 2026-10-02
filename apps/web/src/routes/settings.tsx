@@ -1,8 +1,8 @@
-import { Link, createFileRoute } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
 import { KeyRound, Loader2 } from "lucide-react"
 import * as React from "react"
 import { CodeBlock } from "~/components/code-block"
-import { buttonVariants, Button } from "~/components/ui/button"
+import { Button } from "~/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card"
 import { Input } from "~/components/ui/input"
 import { authClient } from "~/lib/auth-client"
@@ -68,21 +68,18 @@ function SettingsPage() {
         <h1 className="text-3xl font-bold tracking-tight">API & MCP</h1>
         <p className="text-muted-foreground">Let your coding agent search every shadcn registry by itself.</p>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>API keys</CardTitle>
-          <CardDescription>Optional. Anonymous REST/MCP reads are limited to 30 requests / minute per IP; a key raises it to 60 / minute per key and is required for writes.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {user ? (
+      {/* API キーはログイン中だけ (ログインは表に出していない。匿名の上限で足りなければ Issue で受ける) */}
+      {user && (
+        <Card>
+          <CardHeader>
+            <CardTitle>API keys</CardTitle>
+            <CardDescription>Optional. Anonymous REST/MCP reads are limited to 30 requests / minute per IP; a key raises it to 60 / minute per key and is required for writes.</CardDescription>
+          </CardHeader>
+          <CardContent>
             <ApiKeys />
-          ) : (
-            <Link to="/login" search={{ redirect: "/settings" }} className={buttonVariants({ variant: "outline" })}>
-              Sign in to create keys
-            </Link>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>MCP</CardTitle>

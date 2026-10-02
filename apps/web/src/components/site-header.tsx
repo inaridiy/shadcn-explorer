@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { Moon, Search, Sun } from "lucide-react"
-import { Button, buttonVariants } from "~/components/ui/button"
+import { Button } from "~/components/ui/button"
 import { usePalette } from "./command-palette"
 import { SignalDot } from "./listing-badge"
 import { LogoMark } from "./logo"
@@ -71,13 +71,8 @@ export function SiteHeader({ user }: { user: { name: string; isAdmin: boolean } 
           <span className="hidden sm:contents">
             <ThemeToggle />
           </span>
-          {user ? (
-            <span className="hidden max-w-32 truncate text-sm text-muted-foreground sm:inline">{user.name}</span>
-          ) : (
-            <Link to="/login" className={buttonVariants({ size: "sm" })}>
-              Sign in
-            </Link>
-          )}
+          {/* ログインは運営者向け (/login を直接開く)。一般の閲覧者にはできることが無いので出さない */}
+          {user && <span className="hidden max-w-32 truncate text-sm text-muted-foreground sm:inline">{user.name}</span>}
         </div>
       </div>
     </header>
