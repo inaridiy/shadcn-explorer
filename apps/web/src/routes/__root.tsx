@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { HeadContent, Link, Outlet, Scripts, createRootRoute } from "@tanstack/react-router"
 import type * as React from "react"
+import { CommandPaletteProvider } from "~/components/command-palette"
 import { SiteHeader } from "~/components/site-header"
 import { getSessionFn } from "~/server/session"
 import appCss from "~/styles/app.css?url"
@@ -13,13 +14,18 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Shadcn Explorer — search every shadcn registry" },
+      { title: "shadcn explorer — every shadcn registry, running live" },
       {
         name: "description",
-        content: "Register shadcn registries and search every component across them with BM25, semantic and multimodal search.",
+        content: "Browse and search components from every shadcn registry, each built and running live, with docs, install commands and an MCP server.",
       },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" },
+      { rel: "stylesheet", href: appCss },
+    ],
   }),
   shellComponent: RootDocument,
   component: RootLayout,
@@ -42,18 +48,18 @@ export const Route = createRootRoute({
 function RootLayout() {
   const { user } = Route.useRouteContext()
   return (
-    <>
+    <CommandPaletteProvider>
       <SiteHeader user={user} />
-      <main className="mx-auto w-full max-w-7xl px-4 pb-24">
+      <main className="mx-auto w-full max-w-[1360px] px-4 pb-24 sm:px-8">
         <Outlet />
       </main>
-    </>
+    </CommandPaletteProvider>
   )
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ja" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <HeadContent />

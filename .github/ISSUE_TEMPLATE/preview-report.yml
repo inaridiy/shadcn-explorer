@@ -1,0 +1,46 @@
+name: Preview report
+description: A component preview is broken or misleading / コンポーネントのプレビュー (ライブデモ・スクショ) がおかしい
+title: "[Preview] "
+labels: ["preview-broken"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        プレビューは `shadcn add` で入れたものをコンテナでビルドして自動で作っています。ずれていたら教えてください。
+        Previews are built automatically from `shadcn add` in a sandbox. Thanks for telling us when one is off.
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: "registry/name (filled in automatically when opened from the component page / コンポーネントのページから開くと自動で入ります)"
+      placeholder: "8bitcn/calendar"
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: URL of the component page / コンポーネントのページの URL
+      placeholder: https://shadcn-explorer.inaridiy.com/c/8bitcn/calendar
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: Build id (filled in automatically) / プレビューのビルドの ID (自動で入ります)
+  - type: dropdown
+    id: problem
+    attributes:
+      label: What is wrong?
+      options:
+        - Blank or crashed / 何も出ない・エラー
+        - Looks different from the registry's docs / 公式のドキュメントと見た目が違う
+        - Wrong colors on this component only (whole registry wrong? use the Theme report) / この部品だけ色が違う (レジストリ全体なら Theme report へ)
+        - Layout is cut off or too small / 見切れる・小さすぎる
+        - Other / その他
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: 期待する見た目 (公式ドキュメントの URL やスクショがあると助かります) / What you expected (a docs link or screenshot helps)

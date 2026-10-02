@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "incremental": true,
+    "tsBuildInfoFile": "./.tsbuildinfo",
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "next/link": ["./src/next-stubs/link.tsx"],
+      "next/image": ["./src/next-stubs/image.tsx"],
+      "next/navigation": ["./src/next-stubs/navigation.ts"],
+      "next/router": ["./src/next-stubs/navigation.ts"],
+      "next/font/google": ["./src/next-stubs/font.ts"],
+      "next/font/local": ["./src/next-stubs/font.ts"],
+      "next/dynamic": ["./src/next-stubs/dynamic.tsx"],
+      "next/script": ["./src/next-stubs/script.tsx"],
+      "next/head": ["./src/next-stubs/head.tsx"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

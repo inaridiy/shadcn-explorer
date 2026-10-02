@@ -4,10 +4,12 @@ import {
   type MicroUsd,
   Registry,
   RegistryId,
+  type RegistryListing,
   type UserId,
   estimatePlanCost,
   kindFromWire,
   monthStart,
+  operatorListing,
   planEnrichment,
   slugifyRegistryName,
   toUsd,
@@ -124,7 +126,11 @@ const allocateRegistryId = (name: string) =>
  * 登録フロー Step 2: 登録して初回同期をスケジュールする。
  * 同じ registry.json の二重登録と、上限を超える巨大レジストリは拒否する。
  */
-export const registerRegistry = (input: string, ownerId: UserId | null) =>
+export const registerRegistry = (
+  input: string,
+  ownerId: UserId | null,
+  options: { readonly listing?: RegistryListing } = {},
+) =>
   Effect.gen(function* () {
     const repo = yield* RegistryRepository
     const scheduler = yield* JobScheduler
@@ -160,6 +166,11 @@ export const registerRegistry = (input: string, ownerId: UserId | null) =>
       status: { _tag: "Pending" },
       createdAt: now,
       declaredItems: resolved.index.items.length,
+      // 公式ディレクトリに載っていれば、どこから登録しても Official
+      listing: Option.match(resolved.directoryEntry, {
+        onNone: () => options.listing ?? operatorListing,
+        onSome: (entry): RegistryListing => ({ _tag: "Official", directoryName: entry.name, listed: true }),
+      }),
     })
     yield* repo.insert(registry)
     yield* scheduler.scheduleSync(registry.id)

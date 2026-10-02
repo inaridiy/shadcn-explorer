@@ -62,6 +62,14 @@ export const WireDirectoryEntry = Schema.Struct({
     Schema.Struct({
       status: Schema.String,
       score: Schema.optional(Schema.Number),
+      hidden: Schema.optional(Schema.Boolean),
+    }),
+  ),
+  /** 公式ディレクトリの並び順の指標と、ディレクトリが数えたアイテム数 */
+  ranking: Schema.optional(
+    Schema.Struct({
+      score: Schema.optional(Schema.Number),
+      itemCount: Schema.optional(Schema.Number),
     }),
   ),
 })
@@ -73,7 +81,20 @@ export const WireDirectory = Schema.Union(
 )
 export type WireDirectory = typeof WireDirectory.Type
 
-export const normalizeDirectory = (dir: WireDirectory): ReadonlyArray<WireDirectoryEntry> =>
-  Array.isArray(dir)
+/**
+ * shadcn/ui 自身はディレクトリに載っていない (index.json は配列で、registry.json の形式ではない)。
+ * style ごとの registry.json (`/r/styles/{style}/registry.json`) は正規の形式なので、ディレクトリの項目として足して公式扱いにする
+ */
+export const SHADCN_UI_ENTRY: WireDirectoryEntry = {
+  name: "@shadcn",
+  homepage: "https://ui.shadcn.com",
+  url: "https://ui.shadcn.com/r/styles/new-york-v4/{name}.json",
+  description: "The components shadcn/ui itself ships (new-york-v4 style).",
+}
+
+export const normalizeDirectory = (dir: WireDirectory): ReadonlyArray<WireDirectoryEntry> => {
+  const entries = Array.isArray(dir)
     ? (dir as ReadonlyArray<WireDirectoryEntry>)
     : Object.entries(dir as Record<string, string>).map(([name, url]) => ({ name, url }))
+  return entries.some((e) => e.name.toLowerCase() === SHADCN_UI_ENTRY.name) ? entries : [SHADCN_UI_ENTRY, ...entries]
+}

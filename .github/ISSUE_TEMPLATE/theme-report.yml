@@ -1,0 +1,36 @@
+name: Theme report
+description: "The registry's theme (colors, fonts, radius) was detected wrongly / レジストリのテーマ (色・フォント・角丸) の自動判定が間違っている"
+title: "[Theme] "
+labels: ["theme-wrong"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        テーマは「インストール手順どおりに入れたときの見た目」を正として、registry.json と手順のドキュメントから自動で決めています。
+        Themes are detected automatically from registry.json and the install docs: what you get by following the install steps.
+  - type: input
+    id: registry
+    attributes:
+      label: Registry
+      description: "@namespace (filled in automatically when opened from a component or registry page / コンポーネントかレジストリのページから開くと自動で入ります)"
+      placeholder: "@acme"
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: URL of the page where the theme looks wrong / テーマがおかしいページの URL
+      placeholder: https://shadcn-explorer.inaridiy.com/c/acme/button
+  - type: input
+    id: detected
+    attributes:
+      label: Detected theme
+      description: Detection result (filled in automatically) / 判定結果 (自動で入ります)
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should it be?
+      description: Where the install docs define the theme (URL, file, command) / インストール手順のどこにテーマがあるか (URL・ファイル・コマンド)
+    validations:
+      required: true

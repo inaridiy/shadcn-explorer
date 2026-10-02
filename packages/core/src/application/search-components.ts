@@ -11,7 +11,7 @@ import {
 } from "../domain/index.js"
 import {
   BlobStore,
-  type ComponentRecord,
+  type ComponentCard,
   ComponentRepository,
   Embedder,
   type EmbeddingError,
@@ -26,7 +26,7 @@ export class SearchImageNotFound extends Data.TaggedError("SearchImageNotFound")
 }> {}
 
 export interface SearchHitView {
-  readonly record: ComponentRecord
+  readonly card: ComponentCard
   readonly score: number
   readonly sources: ReadonlyArray<SearchSource>
 }
@@ -59,14 +59,15 @@ const ranked = (source: SearchSource, ids: ReadonlyArray<ComponentId>): RankedLi
 const hydrate = (hits: ReadonlyArray<FusedHit>, filters: SearchFilters) =>
   Effect.gen(function* () {
     const repo = yield* ComponentRepository
-    const records = yield* repo.findMany(hits.map((h) => h.componentId))
-    const byId = new Map(records.map((r) => [r.snapshot.id, r]))
+    // カードだけを引く (JSON 全体のデコードは検索の待ち時間の大半を占めていた)
+    const cards = yield* repo.findCards(hits.map((h) => h.componentId))
+    const byId = new Map(cards.map((c) => [c.id, c]))
     return hits.flatMap((h): Array<SearchHitView> => {
-      const record = byId.get(h.componentId)
-      if (!record) return [] // インデックスにだけ残っている削除済みアイテム
-      if (filters.kinds && !filters.kinds.includes(record.snapshot.kind)) return []
-      if (filters.registryIds && !filters.registryIds.includes(record.snapshot.registryId)) return []
-      return [{ record, score: h.score, sources: h.sources }]
+      const card = byId.get(h.componentId)
+      if (!card) return [] // インデックスにだけ残っている削除済みアイテム
+      if (filters.kinds && !filters.kinds.includes(card.kind)) return []
+      if (filters.registryIds && !filters.registryIds.includes(card.registryId)) return []
+      return [{ card, score: h.score, sources: h.sources }]
     })
   })
 
@@ -145,3 +146,38 @@ export const searchComponents = (query: SearchQuery) =>
     const hits = yield* hydrate(fused, query.filters)
     return { hits, warnings } satisfies SearchResult
   }).pipe(Effect.withSpan("searchComponents", { attributes: { tag: query._tag } }))
+
+/**
+ * 「よそで似ているもの」: そのコンポーネントのスクショのベクトル (light / dark) を起点に、
+ * 他のレジストリから見た目の近いものを返す。同じモダリティ同士で引き (ライトはライトと比べる)、RRF で融合する。
+ * 埋め込みは保存済みのものを使うので、Embedder は呼ばない (追加の費用がかからない)。
+ * スクショの無いコンポーネント (hook など) は空を返す。
+ */
+export const similarComponents = (id: ComponentId, limit = 8) =>
+  Effect.gen(function* () {
+    const vectorIndex = yield* VectorIndex
+    const own = yield* vectorIndex.vectorsOf(id, ["light", "dark"])
+    if (own.length === 0) return [] as ReadonlyArray<ComponentCard>
+    const registryId = own[0]!.registryId
+    const lists = yield* Effect.forEach(
+      own,
+      (v) =>
+        vectorIndex
+          .query(v.values, { modalities: [v.modality], excludeRegistryIds: [registryId] }, Math.min(limit * 2, 20))
+          .pipe(Effect.map((ids) => ranked("visual-image", ids))),
+      { concurrency: "unbounded" },
+    )
+    // バックエンドが除外フィルタを無視しても、自分と同じレジストリは出さない
+    const ids = reciprocalRankFusion(lists)
+      .map((h) => h.componentId)
+      .filter((c) => c !== id && !c.startsWith(`${registryId}:`))
+      .slice(0, limit)
+    if (ids.length === 0) return [] as ReadonlyArray<ComponentCard>
+    const cards = yield* (yield* ComponentRepository).findCards(ids)
+    const byId = new Map(cards.map((c) => [c.id, c]))
+    // 順位を保ったまま、スクショのあるものだけ (インデックスにだけ残っている削除済みアイテムも落ちる)
+    return ids.flatMap((c) => {
+      const card = byId.get(c)
+      return card && card.stills ? [card] : []
+    })
+  }).pipe(Effect.withSpan("similarComponents", { attributes: { componentId: id } }))

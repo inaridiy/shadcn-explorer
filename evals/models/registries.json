@@ -1,0 +1,92 @@
+{
+ "8bitcn": {
+  "namespace": "@8bitcn",
+  "locator": {
+   "indexUrl": "https://www.8bitcn.com/r/registry.json",
+   "itemUrlTemplate": "https://www.8bitcn.com/r/{name}.json"
+  },
+  "previewConfig": {
+   "fonts": [
+    "Press Start 2P"
+   ]
+  }
+ },
+ "kokonutui": {
+  "namespace": "@kokonutui",
+  "locator": {
+   "indexUrl": "https://kokonutui.com/r/registry.json",
+   "itemUrlTemplate": "https://kokonutui.com/r/{name}.json"
+  },
+  "previewConfig": {}
+ },
+ "neobrutalism": {
+  "namespace": null,
+  "locator": {
+   "indexUrl": "https://neobrutalism.com/r/registry.json",
+   "itemUrlTemplate": "https://neobrutalism.com/r/{name}.json"
+  },
+  "previewConfig": {
+   "themeCss": "@import url(\"https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@300..700&display=swap\");\n\n@theme inline {\n  --font-head: var(--font-head);\n  --font-sans: var(--font-sans);\n  --radius: var(--radius);\n\n  --shadow-xs: 1px 1px 0 0 var(--border);\n  --shadow-sm: 2px 2px 0 0 var(--border);\n  --shadow: 3px 3px 0 0 var(--border);\n  --shadow-md: 4px 4px 0 0 var(--border);\n  --shadow-lg: 6px 6px 0 0 var(--border);\n  --shadow-xl: 10px 10px 0 1px var(--border);\n  --shadow-2xl: 16px 16px 0 1px var(--border);\n\n  --color-background: var(--background);\n  --color-foreground: var(--foreground);\n  --color-card: var(--card);\n  --color-card-foreground: var(--card-foreground);\n  --color-primary: var(--primary);\n  --color-primary-foreground: var(--primary-foreground);\n  --color-primary-hover: var(--primary-hover);\n  --color-secondary: var(--secondary);\n  --color-secondary-foreground: var(--secondary-foreground);\n  --color-muted: var(--muted);\n  --color-muted-foreground: var(--muted-foreground);\n  --color-accent: var(--accent);\n  --color-accent-foreground: var(--accent-foreground);\n  --color-destructive: var(--destructive);\n  --color-destructive-foreground: var(--destructive-foreground);\n  --color-border: var(--border);\n  --color-input: var(--input);\n  --color-ring: var(--ring);\n}\n\n:root {\n  --font-head: \"Archivo Black\", sans-serif;\n  --font-sans: \"Space Grotesk\", sans-serif;\n  --radius: 0;\n  --background: #fff7e8;\n  --foreground: #000;\n  --card: #fff;\n  --card-foreground: #000;\n  --primary: #ffdc58;\n  --primary-hover: #ffd12e;\n  --primary-foreground: #000;\n  --secondary: #000;\n  --secondary-foreground: #fff;\n  --muted: #efe7d6;\n  --muted-foreground: #6b6355;\n  --accent: #ffe7a3;\n  --accent-foreground: #000;\n  --destructive: #e63946;\n  --destructive-foreground: #fff;\n  --border: #000;\n  --input: #fff;\n  --ring: #000;\n}\n\n.dark {\n  --background: #1a1815;\n  --foreground: #f5f0e6;\n  --card: #262320;\n  --card-foreground: #f5f0e6;\n  --primary: #ffdc58;\n  --primary-hover: #ffd12e;\n  --primary-foreground: #000;\n  --secondary: #3a352f;\n  --secondary-foreground: #f5f0e6;\n  --muted: #2e2a24;\n  --muted-foreground: #b3ac9e;\n  --accent: #38342b;\n  --accent-foreground: #f5f0e6;\n  --destructive: #ff6b6b;\n  --destructive-foreground: #1a1815;\n  --border: #000;\n  --input: #262320;\n  --ring: #ffdc58;\n}\n\nbody {\n  font-family: var(--font-sans);\n}\n",
+   "themeVars": {
+    "--font-head": "\"Archivo Black\"",
+    "--font-sans": "\"Space Grotesk\"",
+    "--shadow-xs": "1px 1px 0 0 var(--border)",
+    "--shadow-sm": "2px 2px 0 0 var(--border)",
+    "--shadow-md": "4px 4px 0 0 var(--border)",
+    "--shadow-lg": "6px 6px 0 0 var(--border)",
+    "--shadow-xl": "10px 10px 0 1px var(--border)",
+    "--shadow-2xl": "16px 16px 0 1px var(--border)",
+    "--color-primary-hover": "var(--primary-hover)"
+   },
+   "fonts": [
+    "Archivo Black",
+    "Space Grotesk"
+   ],
+   "css": "@theme inline { --shadow: 3px 3px 0 0 var(--border); }",
+   "tokens": {
+    "light": {
+     "--radius": "0",
+     "--background": "#fff7e8",
+     "--foreground": "#000",
+     "--card": "#fff",
+     "--card-foreground": "#000",
+     "--primary": "#ffdc58",
+     "--primary-hover": "#ffd12e",
+     "--primary-foreground": "#000",
+     "--secondary": "#000",
+     "--secondary-foreground": "#fff",
+     "--muted": "#efe7d6",
+     "--muted-foreground": "#6b6355",
+     "--accent": "#ffe7a3",
+     "--accent-foreground": "#000",
+     "--destructive": "#e63946",
+     "--destructive-foreground": "#fff",
+     "--border": "#000",
+     "--input": "#fff",
+     "--ring": "#000"
+    },
+    "dark": {
+     "--radius": "0",
+     "--background": "#1a1815",
+     "--foreground": "#f5f0e6",
+     "--card": "#262320",
+     "--card-foreground": "#f5f0e6",
+     "--primary": "#ffdc58",
+     "--primary-hover": "#ffd12e",
+     "--primary-foreground": "#000",
+     "--secondary": "#3a352f",
+     "--secondary-foreground": "#f5f0e6",
+     "--muted": "#2e2a24",
+     "--muted-foreground": "#b3ac9e",
+     "--accent": "#38342b",
+     "--accent-foreground": "#f5f0e6",
+     "--destructive": "#ff6b6b",
+     "--destructive-foreground": "#1a1815",
+     "--border": "#000",
+     "--input": "#262320",
+     "--ring": "#ffdc58"
+    }
+   }
+  }
+ }
+}

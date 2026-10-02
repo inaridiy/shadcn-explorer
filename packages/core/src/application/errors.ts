@@ -1,6 +1,6 @@
 import { Data } from "effect"
 import type { RegistryId } from "../domain/index.js"
 
-export class NotRegistryOwner extends Data.TaggedError("NotRegistryOwner")<{
+export class RegistryNotFoundById extends Data.TaggedError("RegistryNotFoundById")<{
   readonly registryId: RegistryId
 }> {}

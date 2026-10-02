@@ -83,7 +83,7 @@ export const classifyRegistryInput = (rawInput: string): Either.Either<RegistryI
   }
   // {name} はそのままだと URL パーサがエンコードしてしまうので退避して検証する
   if (input.includes("{name}")) {
-    return parsePublicHttpsUrl(input.replaceAll("{name}", "__name__")).pipe(
+    return parsePublicHttpsUrl(input.replaceAll("{name}", "__name__").replaceAll("{style}", "__style__")).pipe(
       Either.map(() => RegistryInput.ItemTemplate({ template: input })),
     )
   }
@@ -120,15 +120,25 @@ const locatorFromDirectory = (dir: URL): RegistryLocator => {
  * 入力から、順に試すべきロケータ候補を導出する (純粋関数)。
  * Namespace は外部ディレクトリの解決が必要なので空配列を返し、アプリケーション層で扱う。
  */
+/**
+ * `{style}` 入りのテンプレート (例: `https://diceui.com/r/{style}/{name}.json`)。shadcn の CLI は components.json の style で
+ * 埋めるが、どの style で配信しているかはレジストリ次第なので、よく使われるものを順に試す (v0.7。公式ディレクトリの 8 件)
+ */
+export const REGISTRY_STYLES = ["new-york-v4", "radix-vega", "base-vega", "radix-nova", "base-nova", "new-york", "default"] as const
+const expandStyle = (template: string): ReadonlyArray<string> =>
+  template.includes("{style}") ? REGISTRY_STYLES.map((style) => template.replaceAll("{style}", style)) : [template]
+
 export const candidateLocators = (input: RegistryInput): ReadonlyArray<RegistryLocator> =>
   RegistryInput.$match(input, {
     IndexUrl: ({ url }) => [locatorFromIndex(url)],
-    ItemTemplate: ({ template }) => [
-      new RegistryLocator({
-        indexUrl: template.replace(/\{name\}(\.json)?$/, "registry.json").replaceAll("{name}", "registry"),
-        itemUrlTemplate: template,
-      }),
-    ],
+    ItemTemplate: ({ template }) =>
+      expandStyle(template).map(
+        (t) =>
+          new RegistryLocator({
+            indexUrl: t.replace(/\{name\}(\.json)?$/, "registry.json").replaceAll("{name}", "registry"),
+            itemUrlTemplate: t,
+          }),
+      ),
     Namespace: () => [],
     ItemUrl: ({ url }) => [locatorFromDirectory(new URL(".", stripSearch(url)))],
     SiteUrl: ({ url }) => {

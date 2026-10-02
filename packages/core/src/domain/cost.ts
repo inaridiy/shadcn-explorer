@@ -13,7 +13,8 @@ export const toUsd = (value: MicroUsd): number => value / 1_000_000
 export const addMicro = (a: MicroUsd, b: MicroUsd): MicroUsd => MicroUsd.make(a + b)
 
 /** 課金が発生する外部リソース */
-export const CostCategory = Schema.Literal("llm", "agent", "browser", "embedding", "ai-search", "vectorize")
+/** agent は v0.2 のサンドボックス Agent (過去の台帳に残る)。sandbox は v0.3 のビルド用コンテナ */
+export const CostCategory = Schema.Literal("llm", "agent", "sandbox", "browser", "embedding", "ai-search", "vectorize")
 export type CostCategory = typeof CostCategory.Type
 
 /** LLM のトークン単価 (USD / 1M tokens) */
@@ -46,11 +47,13 @@ export interface PriceBook {
   readonly docModel: TokenRates
   /** ドキュメント 1 件あたりの見込みトークン数 */
   readonly docTokensEstimate: TokenUsage
-  /** プレビュービルド (サンドボックス Agent 1 セッション) の単価と見込み */
+  /** プレビューのデモを書く LLM の単価と、1 件あたりの見込み (初回 + 修正の期待値込み) */
   readonly previewModel: TokenRates
   readonly previewTokensEstimate: TokenUsage
-  /** サンドボックス (コンテナ) 1 セッションあたりの固定費見込み */
-  readonly previewSandboxEstimate: MicroUsd
+  /** ビルド用コンテナ 1 秒あたり */
+  readonly sandboxPerSecond: MicroUsd
+  /** 1 コンポーネントのビルドに要する見込み秒数 (修正の期待値込み) */
+  readonly sandboxSecondsPerPreview: number
   /** Browser Rendering 1 秒あたり */
   readonly browserPerSecond: MicroUsd
   /** 1 コンポーネントのプレビュー撮影に要する見込み秒数 (light + dark) */
@@ -62,7 +65,10 @@ export interface PriceBook {
 }
 
 export const previewBuildEstimate = (prices: PriceBook): MicroUsd =>
-  addMicro(llmCost(prices.previewTokensEstimate, prices.previewModel), prices.previewSandboxEstimate)
+  addMicro(
+    llmCost(prices.previewTokensEstimate, prices.previewModel),
+    MicroUsd.make(Math.round(prices.sandboxPerSecond * prices.sandboxSecondsPerPreview)),
+  )
 
 export const estimateStepCost = (step: EnrichmentStep, prices: PriceBook): MicroUsd => {
   switch (step._tag) {
@@ -138,6 +144,8 @@ export class UsageRecord extends Schema.Class<UsageRecord>("UsageRecord")({
   /** 実トークン数などの明細 */
   detail: Schema.Record({ key: Schema.String, value: Schema.Number }),
   at: Schema.Number,
+  /** LLM のモデル名 (無料枠の日次集計に使う)。LLM 以外は null */
+  model: Schema.optionalWith(Schema.NullOr(Schema.String), { default: () => null }),
 }) {}
 
 /** 月の開始時刻 (UTC)。月次集計のキーに使う */

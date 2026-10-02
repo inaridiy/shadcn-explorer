@@ -5,7 +5,19 @@
   "main": "src/server.ts",
   "compatibility_date": "2026-09-20",
   "compatibility_flags": ["nodejs_compat"],
-  "observability": { "enabled": true, "traces": { "enabled": true } },
+  // 公開する URL はカスタムドメインだけ (ログインのコールバックを 1 つにするため、workers.dev は閉じる)
+  "routes": [{ "pattern": "shadcn-explorer.inaridiy.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  // ログは全件、トレースは 5% だけ (2026-10-01 からトレースのスパンもログ 1 件として課金される。
+  // キューの消費者は 10 秒ごとに status / lease を叩くので、全件だと一括取り込みでスパンが膨らむ)。
+  // issues: 未捕捉例外・5xx・console.error を Issue にまとめる (ベータ・無料)。通知先はダッシュボードの Automation で設定する
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 },
+    "issues": { "enabled": true }
+  },
 
   "d1_databases": [
     {
@@ -24,38 +36,71 @@
   // "ai_search": [{ "binding": "COMPONENT_SEARCH", "instance_name": "shadcn-explorer" }],
   // 匿名アクセス (REST 読み取り / MCP) の IP 単位レート制限。API キーがあれば別枠 (Better Auth のキー単位制限)
   "ratelimits": [{ "name": "ANON_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
-  // Browser Rendering (Playwright) でプレビューを撮影
-  "browser": { "binding": "BROWSER" },
-  // CF-Open-Agents-API (デプロイ名 my-agents) の Agents エントリポイントを Service Binding で呼ぶ
-  "services": [{ "binding": "AGENTS", "service": "my-agents", "entrypoint": "Agents" }],
+  // プレビューのビルド・撮影用コンテナ (Cloudflare Sandbox)。イメージにビルド済みのハーネスと Chromium を焼き込む (preview-harness/)
+  // max_instances は sandbox-preview-compiler.ts の POOL_SIZE 以上にする
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./preview-harness/Dockerfile",
+      "image_build_context": "./preview-harness",
+      // Chromium での描画確認・撮影・録画もするので 2 vCPU (アニメーションの録画がカクつかないように)
+      "instance_type": "standard-3",
+      "max_instances": 8
+    }
+  ],
+  "durable_objects": { "bindings": [{ "class_name": "Sandbox", "name": "SANDBOX" }] },
+  // フォールバックの Coding Agent: CF-Open-Agents-API (デプロイ名 my-agents、~/my-agents) の Agents エントリポイント
+  "services": [
+    { "binding": "AGENTS", "service": "my-agents", "entrypoint": "Agents" },
+    // テーマのエージェントに渡すドキュメントの読み取り (webforai platform の内部向け RPC。課金・API キーなし、tenant ごとに 300 回/分)
+    { "binding": "WEBFORAI", "service": "webforai-platform", "entrypoint": "PlatformRpc" }
+  ],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
 
   "workflows": [
     { "name": "shadcn-explorer-sync", "binding": "SYNC_WORKFLOW", "class_name": "SyncRegistryWorkflow" },
     { "name": "shadcn-explorer-enrich", "binding": "ENRICH_WORKFLOW", "class_name": "EnrichBatchWorkflow" }
   ],
-  // 毎日: 全レジストリを再同期 (差分がなければ AI コスト 0) + 未完了分 (予算後回し・一時失敗) を拾い直す
-  "triggers": { "crons": ["17 3 * * *"] },
+  // エンリッチのキュー (1 メッセージ = 1 コンポーネント)。消費者は Workflow を起動して終わるまで待つので、
+  // max_concurrency がそのまま全体の同時実行数 (= コンテナ・LLM の瞬間最大) になる。POOL_SIZE (6) より少し少なくして衝突待ちを減らす
+  "queues": {
+    "producers": [{ "binding": "ENRICH_QUEUE", "queue": "shadcn-explorer-enrich" }],
+    "consumers": [
+      {
+        "queue": "shadcn-explorer-enrich",
+        "max_batch_size": 1,
+        "max_concurrency": 4,
+        // 処理中の別メッセージに譲る・長い Workflow の続きを待つための retry を含む。尽きても backlog sweeper が拾い直す
+        "max_retries": 100
+      }
+    ]
+  },
+  // 毎日 (03:17 UTC。OpenAI の無料枠のリセット 00:00 UTC の後): 公式ディレクトリの取り込み + 7 日経ったレジストリの再同期
+  //   (差分がなければ AI コスト 0) + 未完了分 (予算・無料枠で後回し、一時失敗) の拾い直し + 公開ログの掃除
+  // 10 分ごと: パイプラインの見張り (src/infrastructure/pipeline-watchdog.ts。異常は console.error → Observability の Issues)
+  "triggers": { "crons": ["17 3 * * *", "*/10 * * * *"] },
 
   "vars": {
     // "cloudflare": 本番構成 / "local": D1 FTS5 + フェイク AI でキー無しに動かす
     "EXPLORER_MODE": "cloudflare",
+    // 公式ディレクトリの自動取り込み ("off" で止める)
+    "DIRECTORY_INTAKE": "off",
     // BM25 のバックエンド: "d1" (D1 FTS5, 既定) | "ai-search"
     "TEXT_SEARCH_BACKEND": "d1",
-    "AGENTS_TENANT": "shadcn-explorer",
-    // CF-Open-Agents-API のプリセット名 (Agents 側で gpt-6-luna に割り当てる。docs/agents-worker.md)
-    "AGENT_PRESET": "codex",
-    // Agents API が無い場合に Responses API で直接使うモデル
+    // ドキュメントとプレビューのデモを書くモデル (Responses API)
     "OPENAI_MODEL": "gpt-6-luna",
+    // フォールバックの Coding Agent: CF-Open-Agents-API のテナントとプリセット (my-agents の src/agents.ts。codex + gpt-6-luna、推論 medium はこちらから指定)
+    "AGENTS_TENANT": "shadcn-explorer",
+    "AGENT_PRESET": "shadcn-explorer",
     "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2",
     "GEMINI_EMBEDDING_DIMENSIONS": "1536",
     "MONTHLY_BUDGET_USD": "100",
     "MAX_ITEMS_PER_REGISTRY": "500",
     "MAX_ITEMS_PER_USER_PER_MONTH": "1000",
-    "ENRICH_PARALLELISM": "4",
-    "BETTER_AUTH_URL": "https://shadcn-explorer-v2.inaridiy.workers.dev"
+    "BETTER_AUTH_URL": "https://shadcn-explorer.inaridiy.com"
   }
   // Secrets (wrangler secret put):
   //   BETTER_AUTH_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
-  //   GEMINI_API_KEY, AI_GATEWAY_BASE_URL (任意), AGENTS_API_URL/AGENTS_API_TOKEN (Service Binding を使わない場合),
-  //   OPENAI_API_KEY (Agents API を使わずに Responses API で直接ドキュメント生成する場合)
+  //   GEMINI_API_KEY, AI_GATEWAY_BASE_URL (任意),
+  //   OPENAI_API_KEY (ドキュメントとプレビューのデモ生成)
 }

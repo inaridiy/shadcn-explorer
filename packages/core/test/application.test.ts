@@ -1,21 +1,39 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect, Layer, Option, TestClock } from "effect"
 import {
-  collectPreviewBuild,
+  browseGallery,
+  captureVariant,
+  isImmutableShotKey,
+  listComponentCards,
+  screenshotKey,
+  compileDemo,
   enrichComponent,
+  generateDemo,
+  repairDemo,
   requestEnrichment,
   scheduleBacklog,
-  startPreviewBuild,
+  updateRegistryPreviewConfig,
   getComponentDetail,
   listRegistries,
   previewRegistration,
   registerRegistry,
   searchComponents,
+  similarComponents,
   syncRegistry,
 } from "../src/application/index.js"
 import { ComponentId, RegistryId, UsageRecord, UserId, usd } from "../src/domain/index.js"
-import { BlobStore, ComponentRepository, RegistryRepository } from "../src/ports/index.js"
-import { type ScheduledJobs, makeInMemoryLayer, testConfig } from "../src/testing/index.js"
+import { type AgentRun, BlobStore, ComponentRepository, RegistryRepository } from "../src/ports/index.js"
+import {
+  ExplorerConfigTest,
+  FakeDemoWriter,
+  FakePreviewAgent,
+  FakePreviewCompiler,
+  FakePreviewRendererWith,
+  type RecordedCapture,
+  type ScheduledJobs,
+  makeInMemoryLayer,
+  testConfig,
+} from "../src/testing/index.js"
 
 const INDEX = "https://acme.dev/r/registry.json"
 
@@ -54,8 +72,16 @@ const baseFixtures = (): Record<string, unknown> => ({
   }),
 })
 
+/** エージェントへの委譲を無効にした設定 (決まった手順だけの振る舞いを見るテスト用) */
+const noAgent = { previewBuild: { ...testConfig.previewBuild, agent: null } }
+
 const setup = (
-  overrides: { fixtures?: Record<string, unknown>; agentFailFor?: Array<string>; previewFailFor?: Array<string> } = {},
+  overrides: {
+    fixtures?: Record<string, unknown>
+    agentFailFor?: Array<string>
+    previewFailFor?: Array<string>
+    config?: Partial<typeof testConfig>
+  } = {},
 ) => {
   const jobs: ScheduledJobs = { syncs: [], enrichments: [] }
   const usage: Array<UsageRecord> = []
@@ -66,6 +92,7 @@ const setup = (
     usage,
     ...(overrides.agentFailFor ? { agentFailFor: overrides.agentFailFor } : {}),
     ...(overrides.previewFailFor ? { previewFailFor: overrides.previewFailFor } : {}),
+    ...(overrides.config ? { config: overrides.config } : {}),
   })
   return { jobs, usage, fixtures, layer }
 }
@@ -186,6 +213,28 @@ describe("sync", () => {
     }).pipe(Effect.provide(layer))
   })
 
+  it.effect("一時的に取得できなかったアイテムは削除しない (エンリッチ結果を払い直さない)", () => {
+    const fixtures = baseFixtures()
+    const { layer, jobs } = setup({ fixtures })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      jobs.enrichments.length = 0
+
+      const dataTable = fixtures["https://acme.dev/r/data-table.json"]
+      delete fixtures["https://acme.dev/r/data-table.json"]
+      const report = yield* syncRegistry(registry.id)
+      expect(report).toMatchObject({ added: 0, changed: 0, removed: 0 })
+      const repo = yield* ComponentRepository
+      expect(Option.isSome(yield* repo.findById(ComponentId.make("acme:data-table")))).toBe(true)
+
+      // 取得できるようになっても、内容が同じなら何も投入しない
+      fixtures["https://acme.dev/r/data-table.json"] = dataTable
+      expect(yield* syncRegistry(registry.id)).toMatchObject({ added: 0, unchanged: 3 })
+      expect(jobs.enrichments).toEqual([])
+    }).pipe(Effect.provide(layer))
+  })
+
   it.effect("インデックスが取れなければ Failed に遷移する", () => {
     const fixtures = baseFixtures()
     const { layer } = setup({ fixtures })
@@ -215,17 +264,23 @@ describe("enrichment", () => {
       expect(button.enrichment.preview._tag).toBe("Captured")
       expect(button.enrichment.index).toMatchObject({ _tag: "Indexed", withImage: true })
       if (button.enrichment.preview._tag === "Captured") {
-        expect(Option.isSome(yield* blobs.get(button.enrichment.preview.lightKey))).toBe(true)
+        const { lightKey, embedImages } = button.enrichment.preview
+        expect(lightKey).toMatch(/\.webp$/)
+        expect(Option.isSome(yield* blobs.get(lightKey))).toBe(true)
+        // 画像埋め込みは WebP ではなく JPEG から
+        expect(embedImages?.lightKey).toMatch(/\.jpg$/)
+        expect(Option.isSome(yield* blobs.get(embedImages!.lightKey))).toBe(true)
       }
 
       const hook = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:use-mounted")))
       expect(hook.enrichment.preview._tag).toBe("NotCaptured")
       expect(hook.enrichment.index).toMatchObject({ _tag: "Indexed", withImage: false })
 
-      // ドキュメントは 3 件とも LLM、プレビューはビジュアルな 2 件だけ (hook は除外)
-      expect(usage.filter((u) => u.category === "llm")).toHaveLength(3)
-      expect(usage.filter((u) => u.category === "agent")).toHaveLength(2)
-      expect(usage.filter((u) => u.category === "browser")).toHaveLength(2)
+      // ドキュメントは 3 件とも LLM、プレビュー (デモ LLM + ビルド) はビジュアルな 2 件だけ (hook は除外)
+      expect(usage.filter((u) => u.category === "llm" && !("demo" in u.detail))).toHaveLength(3)
+      expect(usage.filter((u) => u.category === "llm" && "demo" in u.detail)).toHaveLength(2)
+      // コンテナ: ビルド 2 回 + 撮影 2 回 (撮影もコンテナ内の Playwright)
+      expect(usage.filter((u) => u.category === "sandbox")).toHaveLength(4)
       expect(usage.every((u) => u.registryId === "acme")).toBe(true)
     }).pipe(Effect.provide(layer))
   })
@@ -255,12 +310,12 @@ describe("enrichment", () => {
   })
 
   it.effect("プレビュービルドが失敗しても他のコンポーネント・ステップは止まらない", () => {
-    const { layer, jobs } = setup({ previewFailFor: ["glow-button"] })
+    const { layer, jobs } = setup({ previewFailFor: ["glow-button"], config: noAgent })
     return Effect.gen(function* () {
       yield* ingestAll(jobs)
       const repo = yield* ComponentRepository
       const button = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:glow-button")))
-      expect(button.enrichment.preview).toMatchObject({ _tag: "Failed", stage: "build", attempts: 1 })
+      expect(button.enrichment.preview).toMatchObject({ _tag: "Failed", stage: "build", cause: "demo", attempts: 1 })
       expect(button.enrichment.index).toMatchObject({ _tag: "Indexed", withImage: false })
       const table = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:data-table")))
       expect(table.enrichment.preview._tag).toBe("Captured")
@@ -300,18 +355,242 @@ describe("enrichment", () => {
     }).pipe(Effect.provide(layer))
   })
 
-  it.effect("プレビュービルドは start → poll の 2 段階で進む (Workflow が間で待てる)", () => {
-    const layer = makeInMemoryLayer({ fixtures: baseFixtures(), previewPollsUntilDone: 3 })
+  it.effect("デモは生成 → コンパイル ⇄ 修正の段階に分かれ、Workflow が各段を別ステップにできる", () => {
+    const layer = makeInMemoryLayer({ fixtures: baseFixtures(), demoWriter: FakeDemoWriter({ lintFailFor: ["glow-button"] }) })
     return Effect.gen(function* () {
       const registry = yield* registerRegistry(INDEX, null)
       yield* syncRegistry(registry.id)
       const id = ComponentId.make("acme:glow-button")
-      const job = Option.getOrThrow(yield* startPreviewBuild(id))
-      expect(Option.isNone(yield* collectPreviewBuild(id, job))).toBe(true)
-      expect(Option.isNone(yield* collectPreviewBuild(id, job))).toBe(true)
-      expect(Option.getOrThrow(yield* collectPreviewBuild(id, job))._tag).toBe("Done")
       const repo = yield* ComponentRepository
-      expect(Option.getOrThrow(yield* repo.findById(id)).enrichment.preview._tag).toBe("Built")
+      expect(Option.getOrThrow(yield* generateDemo(id))).toBe(0)
+      // 初回のデモは見出し付き (lint 違反) → コンテナを使わずに修正へ回る
+      const first = yield* compileDemo(id, 0)
+      expect(first._tag).toBe("Repair")
+      expect(first._tag === "Repair" && first.problems.join(" ")).toMatch(/headings/)
+      const next = Option.getOrThrow(yield* repairDemo(id, 0, first._tag === "Repair" ? first.problems : []))
+      expect(next).toBe(1)
+      expect((yield* compileDemo(id, 1))._tag).toBe("Done")
+      const preview = Option.getOrThrow(yield* repo.findById(id)).enrichment.preview
+      expect(preview).toMatchObject({ _tag: "Built" })
+      expect(preview._tag === "Built" && preview.demoKey).toMatch(/-1\.tsx$/)
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("型エラーが残るビルドも一旦 Built にし、修正版で置き換える", () => {
+    const calls: Array<string> = []
+    const layer = makeInMemoryLayer({
+      fixtures: baseFixtures(),
+      compiler: FakePreviewCompiler({ diagnosticsOnceFor: ["glow-button"], calls }),
+    })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const id = ComponentId.make("acme:glow-button")
+      yield* enrichComponent(id)
+      expect(calls).toEqual(["glow-button", "glow-button"])
+      const preview = Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview
+      expect(preview._tag).toBe("Captured")
+      expect(preview._tag === "Captured" && preview.demoKey).toMatch(/-1\.tsx$/)
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("ビルドが直らなければ修正回数 (maxRepairs) で打ち切り、アイテムが入らなければ修正しない", () => {
+    const calls: Array<string> = []
+    const layer = makeInMemoryLayer({
+      fixtures: baseFixtures(),
+      compiler: FakePreviewCompiler({ buildFailFor: ["glow-button"], installFailFor: ["data-table"], calls }),
+      config: noAgent,
+    })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      yield* enrichComponent(ComponentId.make("acme:glow-button"))
+      yield* enrichComponent(ComponentId.make("acme:data-table"))
+      expect(calls.filter((c) => c === "glow-button")).toHaveLength(testConfig.previewBuild.maxRepairs + 1)
+      expect(calls.filter((c) => c === "data-table")).toHaveLength(1)
+      const repo = yield* ComponentRepository
+      const button = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:glow-button")))
+      expect(button.enrichment.preview).toMatchObject({ _tag: "Failed", stage: "build", cause: "demo", attempts: 1 })
+      const table = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:data-table")))
+      expect(table.enrichment.preview).toMatchObject({ _tag: "Failed", stage: "build", cause: "registry" })
+      expect(table.enrichment.preview._tag === "Failed" && table.enrichment.preview.error).toMatch(/^install/)
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("決まった手順で直せないアイテムはエージェントに 1 回だけ回し、手順 (manifest) をこちらで再ビルドする", () => {
+    const calls: Array<string> = []
+    const started: Array<string> = []
+    const agentRuns: Array<AgentRun> = []
+    const layer = makeInMemoryLayer({
+      fixtures: baseFixtures(),
+      compiler: FakePreviewCompiler({ registryBrokenFor: ["glow-button"], calls }),
+      agent: FakePreviewAgent({ started }),
+      agentRuns,
+    })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const id = ComponentId.make("acme:glow-button")
+      yield* enrichComponent(id)
+      // 決まった手順 1 回 (registry 起因なのでデモの修正はしない) + エージェントの手順での再ビルド 1 回
+      expect(calls).toEqual(["glow-button", "glow-button"])
+      expect(started).toEqual(["glow-button"])
+      const preview = Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview
+      expect(preview).toMatchObject({ _tag: "Captured", buildKind: "agent", workarounds: ["writeFile"] })
+      const blobs = yield* BlobStore
+      expect(Option.isSome(yield* blobs.get((preview as { manifestKey: string }).manifestKey))).toBe(true)
+      expect(agentRuns.map((r) => r.outcome)).toEqual(["succeeded"])
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("エージェントが諦めたら escalated を立て、同じソース・版では再試行も再委譲もしない", () => {
+    const started: Array<string> = []
+    const agentRuns: Array<AgentRun> = []
+    const layer = makeInMemoryLayer({
+      fixtures: baseFixtures(),
+      compiler: FakePreviewCompiler({ registryBrokenFor: ["glow-button"] }),
+      agent: FakePreviewAgent({ started, gaveUpFor: ["glow-button"] }),
+      agentRuns,
+    })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const id = ComponentId.make("acme:glow-button")
+      yield* enrichComponent(id)
+      const preview = Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview
+      expect(preview).toMatchObject({ _tag: "Failed", cause: "registry", escalated: true })
+      const again = yield* enrichComponent(id)
+      expect(again.plan.steps.map((s) => s._tag)).not.toContain("BuildPreview")
+      expect(started).toEqual(["glow-button"])
+      expect(agentRuns.map((r) => r.outcome)).toEqual(["gave_up"])
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("エージェントの手順が許可リスト外なら採用しない", () => {
+    const agentRuns: Array<AgentRun> = []
+    const layer = makeInMemoryLayer({
+      fixtures: baseFixtures(),
+      compiler: FakePreviewCompiler({ registryBrokenFor: ["glow-button"] }),
+      agent: FakePreviewAgent({ manifest: { actions: [{ type: "writeFile", path: "../main.tsx", content: "" }] } }),
+      agentRuns,
+    })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const id = ComponentId.make("acme:glow-button")
+      yield* enrichComponent(id)
+      const preview = Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview
+      expect(preview).toMatchObject({ _tag: "Failed", escalated: true })
+      expect(agentRuns.map((r) => r.outcome)).toEqual(["rejected"])
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("エージェントはレジストリ単位の上限を超えて呼ばない", () => {
+    const started: Array<string> = []
+    const layer = makeInMemoryLayer({
+      fixtures: baseFixtures(),
+      compiler: FakePreviewCompiler({ registryBrokenFor: ["glow-button", "data-table"] }),
+      agent: FakePreviewAgent({ started }),
+      // 3 件 × 0.25 → 上限 1 件
+      config: { previewBuild: { ...testConfig.previewBuild, agent: { ...testConfig.previewBuild.agent!, maxRatio: 0.25 } } },
+    })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      yield* enrichComponent(ComponentId.make("acme:glow-button"))
+      yield* enrichComponent(ComponentId.make("acme:data-table"))
+      expect(started).toEqual(["glow-button"])
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("動き続ける部品は animated WebP も保存し、描画時の例外は demo 起因のビルド失敗にする", () => {
+    const layer = makeInMemoryLayer({
+      fixtures: baseFixtures(),
+      renderer: FakePreviewRendererWith({ animatedFor: ["Glow Button"], runtimeErrorFor: ["Data Table"] }),
+      config: noAgent,
+    })
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const repo = yield* ComponentRepository
+      const blobs = yield* BlobStore
+      yield* enrichComponent(ComponentId.make("acme:glow-button"))
+      yield* enrichComponent(ComponentId.make("acme:data-table"))
+      const button = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:glow-button"))).enrichment.preview
+      expect(button._tag).toBe("Captured")
+      if (button._tag === "Captured") {
+        expect(button.motion?.lightKey).toMatch(/\.webp$/)
+        expect(button.motion?.lightKey).not.toBe(button.lightKey)
+        expect(Option.isSome(yield* blobs.get(button.motion!.lightKey))).toBe(true)
+      }
+      const table = Option.getOrThrow(yield* repo.findById(ComponentId.make("acme:data-table"))).enrichment.preview
+      expect(table).toMatchObject({ _tag: "Failed", stage: "build", cause: "demo" })
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("撮影方式の版だけ上がったら撮り直すだけで、ビルドの由来は引き継ぐ", () => {
+    const calls: Array<string> = []
+    const { jobs } = setup()
+    const base = { fixtures: baseFixtures(), jobs, compiler: FakePreviewCompiler({ calls }) }
+    return Effect.gen(function* () {
+      const registry = yield* registerRegistry(INDEX, null)
+      yield* syncRegistry(registry.id)
+      const id = ComponentId.make("acme:glow-button")
+      yield* enrichComponent(id)
+      const before = Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview
+      const next = { ...testConfig.enrichment, captureVersion: "cap-next" }
+      const { plan } = yield* enrichComponent(id).pipe(
+        Effect.provide(ExplorerConfigTest({ enrichment: next })),
+      )
+      expect(plan.steps.map((s) => s._tag)).toEqual(["CapturePreview", "Index"])
+      const after = Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview
+      expect(calls).toEqual(["glow-button"])
+      expect(after).toMatchObject({ _tag: "Captured", captureVersion: "cap-next", demoKey: (before as { demoKey: string }).demoKey })
+      expect((after as { lightKey: string }).lightKey).not.toBe((before as { lightKey: string }).lightKey)
+    }).pipe(Effect.provide(makeInMemoryLayer(base)))
+  })
+
+  it.effect("ビルド設定を変えるとビルドし直すが、デモは書き直さない", () => {
+    const demoCalls: Array<string> = []
+    const jobs: ScheduledJobs = { syncs: [], enrichments: [] }
+    const layer = makeInMemoryLayer({ fixtures: baseFixtures(), jobs, demoWriter: FakeDemoWriter({ calls: demoCalls }) })
+    return Effect.gen(function* () {
+      const registry = yield* ingestAll(jobs)
+      expect(demoCalls.sort()).toEqual(["data-table", "glow-button"])
+
+      const result = yield* updateRegistryPreviewConfig(registry.id, { themeCss: ":root{--main:#88aaee}", pins: { "lucide-react": "0.525.0" } })
+      expect(result.rebuilding).toBe(2) // ボタンとテーブル (hook は対象外)
+      const saved = Option.getOrThrow(yield* (yield* RegistryRepository).findById(registry.id))
+      expect(saved.previewConfig).toEqual({ themeCss: ":root{--main:#88aaee}", pins: { "lucide-react": "0.525.0" } })
+      expect(saved.theme).toMatchObject({ _tag: "Resolved", source: "manual" })
+      // 状態は書き換えず、計画がハッシュの違いを見てビルドし直す
+      const id = ComponentId.make("acme:glow-button")
+      expect(Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview._tag).toBe("Captured")
+      expect(jobs.enrichments).toHaveLength(2)
+      const { plan } = yield* enrichComponent(id)
+      expect(plan.steps.map((s) => s._tag)).toEqual(["BuildPreview", "CapturePreview", "Index"])
+      expect(demoCalls.filter((n) => n === "glow-button")).toHaveLength(1)
+      expect(Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview._tag).toBe("Captured")
+      // もう一度計画しても何もしない
+      expect((yield* enrichComponent(id)).plan.steps).toEqual([])
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("トークンだけ変えたら撮り直すだけで、撮影時に注入する。ダークの無いテーマはライトだけ撮る", () => {
+    const captures: Array<RecordedCapture> = []
+    const jobs: ScheduledJobs = { syncs: [], enrichments: [] }
+    const layer = makeInMemoryLayer({ fixtures: baseFixtures(), jobs, renderer: FakePreviewRendererWith({ captures }) })
+    return Effect.gen(function* () {
+      const registry = yield* ingestAll(jobs)
+      captures.length = 0
+      const tokens = { light: { "--primary": "#5294ff", "--background": "#dcebfe", "--foreground": "#000000" } }
+      yield* updateRegistryPreviewConfig(registry.id, { tokens })
+      const id = ComponentId.make("acme:glow-button")
+      const { plan } = yield* enrichComponent(id)
+      expect(plan.steps.map((s) => s._tag)).toEqual(["CapturePreview", "Index"])
+      expect(captures).toEqual([{ schemes: ["light"], tokens }])
+      const preview = Option.getOrThrow(yield* (yield* ComponentRepository).findById(id)).enrichment.preview
+      expect(preview).toMatchObject({ _tag: "Captured", darkKey: null, runtimeTokens: true })
     }).pipe(Effect.provide(layer))
   })
 
@@ -363,28 +642,17 @@ describe("backlog & quotas", () => {
 })
 
 describe("manual enrichment", () => {
-  it.effect("登録者は失敗したドキュメント生成を再要求でき、失敗状態がリセットされる", () => {
+  it.effect("失敗したドキュメント生成を再要求でき、失敗状態がリセットされる", () => {
     const { layer, jobs } = setup({ agentFailFor: ["data-table"] })
     return Effect.gen(function* () {
-      const owner = UserId.make("u1")
-      const registry = yield* registerRegistry(INDEX, owner)
+      const registry = yield* registerRegistry(INDEX, null)
       yield* syncRegistry(registry.id)
       for (const id of jobs.enrichments.splice(0)) yield* enrichComponent(id)
       const id = ComponentId.make("acme:data-table")
-      yield* requestEnrichment(id, owner)
+      yield* requestEnrichment(id)
       expect(jobs.enrichments).toEqual([id])
       const repo = yield* ComponentRepository
       expect(Option.getOrThrow(yield* repo.findById(id)).enrichment.doc._tag).toBe("NotGenerated")
-    }).pipe(Effect.provide(layer))
-  })
-
-  it.effect("登録者以外は再生成を要求できない", () => {
-    const { layer } = setup()
-    return Effect.gen(function* () {
-      const registry = yield* registerRegistry(INDEX, UserId.make("u1"))
-      yield* syncRegistry(registry.id)
-      const error = yield* Effect.flip(requestEnrichment(ComponentId.make("acme:glow-button"), UserId.make("u2")))
-      expect(error._tag).toBe("NotRegistryOwner")
     }).pipe(Effect.provide(layer))
   })
 })
@@ -404,7 +672,7 @@ describe("search & queries", () => {
         limit: 10,
       })
       expect(result.warnings).toEqual([])
-      expect(result.hits[0]?.record.snapshot.name).toBe("glow-button")
+      expect(result.hits[0]?.card.name).toBe("glow-button")
       expect(result.hits[0]?.sources).toEqual(expect.arrayContaining(["keyword", "semantic", "visual-text"]))
     }).pipe(Effect.provide(layer))
   })
@@ -420,7 +688,7 @@ describe("search & queries", () => {
         filters: { kinds: ["hook"] },
         limit: 10,
       })
-      expect(result.hits.map((h) => h.record.snapshot.name)).toEqual(["use-mounted"])
+      expect(result.hits.map((h) => h.card.name)).toEqual(["use-mounted"])
     }).pipe(Effect.provide(layer))
   })
 
@@ -431,8 +699,36 @@ describe("search & queries", () => {
       const blobs = yield* BlobStore
       yield* blobs.put("uploads/q.png", new TextEncoder().encode("Sortable data table"), "image/png")
       const result = yield* searchComponents({ _tag: "Image", imageKey: "uploads/q.png", filters: {}, limit: 5 })
-      expect(result.hits[0]?.record.snapshot.name).toBe("data-table")
+      expect(result.hits[0]?.card.name).toBe("data-table")
       expect(result.hits[0]?.sources).toEqual(["visual-image"])
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("よそで似ているもの: スクショのベクトルで他のレジストリだけから返す", () => {
+    const fixtures = baseFixtures()
+    const BETA = "https://beta.dev/r/registry.json"
+    fixtures[BETA] = {
+      name: "beta",
+      items: [
+        { name: "glossy-button", type: "registry:ui", description: "A shiny glowing button with soft border" },
+        { name: "pricing-table", type: "registry:block", description: "Pricing table with tiers" },
+      ],
+    }
+    fixtures["https://beta.dev/r/glossy-button.json"] = item("glossy-button", { description: "A shiny glowing button with soft border" })
+    fixtures["https://beta.dev/r/pricing-table.json"] = item("pricing-table", { type: "registry:block", description: "Pricing table with tiers" })
+    const { layer, jobs } = setup({ fixtures })
+    return Effect.gen(function* () {
+      yield* ingestAll(jobs)
+      const beta = yield* registerRegistry(BETA, null)
+      yield* syncRegistry(beta.id)
+      for (const id of jobs.enrichments.splice(0)) yield* enrichComponent(id)
+
+      const similar = yield* similarComponents(ComponentId.make("acme:glow-button"), 4)
+      expect(similar.map((c) => c.id)).toEqual(["beta:glossy-button", "beta:pricing-table"])
+      // 自分のレジストリ (acme) のものは出さない
+      expect(similar.every((c) => c.registryId === "beta")).toBe(true)
+      // スクショの無い hook はベクトルも無いので空
+      expect(yield* similarComponents(ComponentId.make("acme:use-mounted"), 4)).toEqual([])
     }).pipe(Effect.provide(layer))
   })
 
@@ -454,3 +750,42 @@ describe("layer composition", () => {
     expect(Layer.isLayer(layer)).toBe(true)
   })
 })
+
+describe("gallery and cards", () => {
+  it.effect("ギャラリーはプレビューのあるものだけを、keyset でページングして返す", () => {
+    const { layer, jobs } = setup()
+    return Effect.gen(function* () {
+      yield* ingestAll(jobs)
+      const first = yield* browseGallery({ limit: 1 })
+      expect(first.cards).toHaveLength(1)
+      expect(first.next).not.toBeNull()
+      const second = yield* browseGallery({ limit: 1, after: first.next! })
+      expect(second.cards).toHaveLength(1)
+      expect(second.next).toBeNull()
+      // hook はプレビューを作らないのでギャラリーには出ない
+      const names = [...first.cards, ...second.cards].map((c) => c.name).sort()
+      expect(names).toEqual(["data-table", "glow-button"])
+      expect(first.cards[0]!.stills?.light).toMatch(/^screenshots\//)
+    }).pipe(Effect.provide(layer))
+  })
+
+  it.effect("カードの一覧は hook も含めて名前順に返す", () => {
+    const { layer, jobs } = setup()
+    return Effect.gen(function* () {
+      const registry = yield* ingestAll(jobs)
+      const cards = yield* listComponentCards({ registryId: registry.id, limit: 10, offset: 0 })
+      expect(cards.map((c) => c.name)).toEqual(["data-table", "glow-button", "use-mounted"])
+      expect(cards.find((c) => c.name === "use-mounted")?.stills).toBeNull()
+    }).pipe(Effect.provide(layer))
+  })
+
+  it("見た目の設定の版 (variant) が入ったスクショのキーだけを immutable とみなす", () => {
+    const id = ComponentId.make("acme:glow-button")
+    const variant = captureVariant({ configHash: "a1b2c3d4e5f6a7", tokensHash: "0f1e2d3c4b5a69" })
+    expect(variant).toBe("a1b2c3d0f1e2d3")
+    expect(isImmutableShotKey(screenshotKey(id, "abc.demo-v2", "cap-v8", "light", variant))).toBe(true)
+    expect(isImmutableShotKey(screenshotKey(id, "abc.demo-v2", "cap-v7", "dark"))).toBe(false)
+    expect(isImmutableShotKey("previews/acme/glow-button/abc.html")).toBe(false)
+  })
+})
+

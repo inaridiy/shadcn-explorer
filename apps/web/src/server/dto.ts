@@ -1,7 +1,7 @@
 import { Option } from "effect"
 import type { Application } from "@shadcn-explorer/core"
-import { type ComponentKind, type Registry, agentPromptFor, scanUntrustedText } from "@shadcn-explorer/core/domain"
-import type { ComponentRecord } from "@shadcn-explorer/core/ports"
+import { type ComponentKind, type ListingTag, type Registry, agentPromptFor, listingBadge, demoLayoutOf, scanUntrustedText } from "@shadcn-explorer/core/domain"
+import { type ComponentCard, type ComponentRecord, toComponentCard } from "@shadcn-explorer/core/ports"
 
 /**
  * プレゼンテーション層の DTO。ドメインオブジェクト (クラス・ブランド型) をそのまま外に出さず、
@@ -18,28 +18,41 @@ export interface ComponentCardDto {
   readonly title: string
   readonly description: string
   readonly summary: string | null
-  readonly screenshot: { readonly light: string; readonly dark: string | null } | null
+  /** レジストリの出自 (OFFICIAL / shadcn/ui / COMMUNITY のバッジ) */
+  readonly listing: ListingTag
+  readonly screenshot: {
+    readonly light: string
+    readonly dark: string | null
+    /** 動き続ける部品だけ: animated WebP (prefers-reduced-motion でない閲覧者に出す) */
+    readonly motion: { readonly light: string; readonly dark: string | null } | null
+  } | null
   readonly status: { readonly doc: string; readonly preview: string; readonly index: string }
 }
 
-export const toCard = (record: ComponentRecord): ComponentCardDto => {
-  const { snapshot, doc, enrichment } = record
-  const preview = enrichment.preview
-  return {
-    id: snapshot.id,
-    registryId: snapshot.registryId,
-    name: snapshot.name,
-    kind: snapshot.kind,
-    title: snapshot.title,
-    description: snapshot.description,
-    summary: Option.getOrNull(Option.map(doc, (d) => d.summary)),
-    screenshot:
-      preview._tag === "Captured"
-        ? { light: mediaUrl(preview.lightKey), dark: preview.darkKey ? mediaUrl(preview.darkKey) : null }
-        : null,
-    status: { doc: enrichment.doc._tag, preview: preview._tag, index: enrichment.index._tag },
-  }
-}
+export const toCardDto = (card: ComponentCard): ComponentCardDto => ({
+  id: card.id,
+  registryId: card.registryId,
+  name: card.name,
+  kind: card.kind,
+  title: card.title,
+  description: card.description,
+  summary: card.summary,
+  listing: card.listing,
+  screenshot: card.stills
+    ? {
+        light: mediaUrl(card.stills.light),
+        dark: card.stills.dark ? mediaUrl(card.stills.dark) : null,
+        motion: card.motion
+          ? { light: mediaUrl(card.motion.light), dark: card.motion.dark ? mediaUrl(card.motion.dark) : null }
+          : null,
+      }
+    : null,
+  status: card.status,
+})
+
+export const toCard = (record: ComponentRecord, listing: ListingTag = "Community"): ComponentCardDto =>
+  toCardDto(toComponentCard(record, listing))
+
 
 export interface SearchHitDto extends ComponentCardDto {
   readonly score: number
@@ -47,7 +60,7 @@ export interface SearchHitDto extends ComponentCardDto {
 }
 
 export const toSearchResultDto = (result: Application.SearchResult) => ({
-  hits: result.hits.map((h): SearchHitDto => ({ ...toCard(h.record), score: h.score, sources: h.sources })),
+  hits: result.hits.map((h): SearchHitDto => ({ ...toCardDto(h.card), score: h.score, sources: h.sources })),
   warnings: result.warnings,
 })
 
@@ -60,6 +73,11 @@ export interface RegistryDto {
   readonly status: Registry["status"]
   readonly componentCount: number
   readonly createdAt: number
+  readonly ownerId: string | null
+  readonly previewConfig: Registry["previewConfig"]
+  /** テーマの判定状態 (registry.json の検出 → エージェント)。提案の中身も含む (運営者の画面で使う) */
+  readonly theme: Registry["theme"]
+  readonly listing: Registry["listing"]
 }
 
 export const toRegistryDto = (registry: Registry, componentCount = 0): RegistryDto => ({
@@ -71,6 +89,10 @@ export const toRegistryDto = (registry: Registry, componentCount = 0): RegistryD
   status: registry.status,
   componentCount,
   createdAt: registry.createdAt,
+  ownerId: registry.ownerId,
+  previewConfig: registry.previewConfig,
+  theme: registry.theme,
+  listing: registry.listing,
 })
 
 export const toDetailDto = (detail: Application.ComponentDetail) => {
@@ -87,7 +109,7 @@ export const toDetailDto = (detail: Application.ComponentDetail) => {
     .filter(Boolean)
     .join("\n")
   return {
-    ...toCard(record),
+    ...toCard(record, listingBadge(registry.listing)),
     registry: toRegistryDto(registry),
     installCommand: detail.installCommand,
     sourceUrl: snapshot.sourceUrl,
@@ -98,6 +120,22 @@ export const toDetailDto = (detail: Application.ComponentDetail) => {
     files: snapshot.files,
     previewHtmlUrl:
       enrichment.preview._tag === "Captured" && enrichment.preview.htmlKey ? mediaUrl(enrichment.preview.htmlKey) : null,
+    previewLayout: demoLayoutOf(snapshot.kind),
+    /** プレビューのビルドで素の `shadcn add` から逸脱したこと (エージェントの回避策・兄弟アイテムの追加など) */
+    previewBuild:
+      enrichment.preview._tag === "Built" || enrichment.preview._tag === "Captured"
+        ? { kind: enrichment.preview.buildKind ?? "core", workarounds: enrichment.preview.workarounds ?? [] }
+        : null,
+    /** プレビューが作れなかった理由。registry 起因なら理由をそのまま、それ以外は「今は作れない」だけ出す */
+    previewFailure:
+      enrichment.preview._tag === "Failed" && enrichment.preview.stage === "build"
+        ? {
+            cause: enrichment.preview.cause ?? "infra",
+            message: enrichment.preview.error.split("\n").find((l) => l.trim() !== "")?.slice(0, 300) ?? "",
+          }
+        : null,
+    /** プレビューとして実際にビルドされたデモ (ui.shadcn.com の Code タブ相当) */
+    demoCode: Option.getOrNull(detail.demoCode),
     doc: doc
       ? {
           summary: doc.summary,
@@ -115,7 +153,7 @@ export const toDetailDto = (detail: Application.ComponentDetail) => {
     agentPrompt: agentPromptFor(snapshot, detail.installCommand, doc),
     safetyFlags: scanUntrustedText(untrusted),
     docModel: enrichment.doc._tag === "Generated" ? enrichment.doc.agentPreset : null,
-    related: detail.related.map(toCard),
+    related: detail.related.map(toCardDto),
   }
 }
 export type ComponentDetailDto = ReturnType<typeof toDetailDto>

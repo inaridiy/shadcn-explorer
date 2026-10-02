@@ -1,7 +1,8 @@
 import { Data, Schema } from "effect"
 import type { ComponentSnapshot } from "./component.js"
 import { previewabilityOf } from "./component.js"
-import { Timestamp } from "./registry.js"
+import { BUILD_VERSION, BuildKind, CAPTURE_VERSION, PreviewFailureCause, previewSourceHash } from "./demo.js"
+import { type RegistryPreviewContext, Timestamp, emptyPreviewContext } from "./registry.js"
 
 /**
  * LLM が生成する「使い方ドキュメント」。
@@ -62,15 +63,47 @@ export type DocState = typeof DocState.Type
 /**
  * プレビューのライフサイクル。
  *   NotCaptured ─BuildPreview→ Built (HTML あり) ─CapturePreview→ Captured (スクショあり)
- * HTML・スクショのオブジェクトキーは (componentId, sourceHash) から決定的に導出する。
+ * プレビューの sourceHash は `previewSourceHash(contentHash, buildVersion)` (ソース × ビルド方式の版)。
+ * HTML のオブジェクトキーはそこから、スクショは更に撮影方式の版 (captureVersion) も入れて決定的に導出する。
  */
 export const PreviewStage = Schema.Literal("build", "capture")
 export type PreviewStage = typeof PreviewStage.Type
+
+/** ビルドの由来。どちらが手順を書き、何を回避したか (UI にそのまま出す) */
+const BuildInfo = {
+  /** ビルドしたデモのソース (src/demo.tsx) の R2 キー。v0.2 の Agent ビルドには無い */
+  demoKey: Schema.optional(Schema.String),
+  buildKind: Schema.optional(BuildKind),
+  /** 素の `shadcn add` からの逸脱 (兄弟アイテムの追加、依存の固定、manifest の操作など) */
+  workarounds: Schema.optional(Schema.Array(Schema.String)),
+  /** エージェントが書いた manifest の R2 キー (buildKind = agent のとき) */
+  manifestKey: Schema.optional(Schema.String),
+  /** ビルドに使ったレジストリ設定のハッシュ (buildConfigHash)。無い (v0.5 以前) ものは今の設定で作ったとみなす */
+  configHash: Schema.optional(Schema.String),
+  /** HTML が実行時のトークン注入 (preview:tokens) に対応しているか (v0.6 のハーネスでビルドしたもの) */
+  runtimeTokens: Schema.optional(Schema.Boolean),
+}
+
+/** 動くサムネイル (animated WebP)。静止画 (lightKey / darkKey) は常にあり、これはアニメーションする部品だけ */
+export const PreviewMotion = Schema.Struct({
+  lightKey: Schema.String,
+  darkKey: Schema.NullOr(Schema.String),
+  durationMs: Schema.Number,
+})
+export type PreviewMotion = typeof PreviewMotion.Type
+
+/** 画像埋め込みの入力 (JPEG)。表示用の静止画が WebP になってから。無い (静止画が PNG の) ものは静止画をそのまま埋め込む */
+export const PreviewEmbedImages = Schema.Struct({
+  lightKey: Schema.String,
+  darkKey: Schema.NullOr(Schema.String),
+})
+export type PreviewEmbedImages = typeof PreviewEmbedImages.Type
 
 export const PreviewState = Schema.Union(
   Schema.TaggedStruct("NotCaptured", {}),
   Schema.TaggedStruct("Built", {
     sourceHash: Schema.String,
+    ...BuildInfo,
     builtAt: Timestamp,
   }),
   Schema.TaggedStruct("Captured", {
@@ -78,6 +111,13 @@ export const PreviewState = Schema.Union(
     lightKey: Schema.String,
     darkKey: Schema.NullOr(Schema.String),
     htmlKey: Schema.NullOr(Schema.String),
+    ...BuildInfo,
+    /** 撮影方式の版。無い (v0.3 以前) か古ければ、ビルドはそのままで撮り直す */
+    captureVersion: Schema.optional(Schema.String),
+    motion: Schema.optional(PreviewMotion),
+    embedImages: Schema.optional(PreviewEmbedImages),
+    /** 撮影時に注入したトークンのハッシュ (tokensHash)。無いものは今のトークンで撮ったとみなす */
+    tokensHash: Schema.optional(Schema.String),
     capturedAt: Timestamp,
   }),
   /** ビルダーがプレビュー不要と判断した等。同じソースでは再試行しない */
@@ -86,6 +126,14 @@ export const PreviewState = Schema.Union(
     ...FailureFields,
     /** どの段階で失敗したか。capture で失敗した場合は HTML は既にある (再ビルド不要) */
     stage: Schema.optionalWith(PreviewStage, { default: () => "build" as const }),
+    /** 原因。無い (v0.3 以前) ものは infra 扱い */
+    cause: Schema.optional(PreviewFailureCause),
+    /** このソース・ビルド方式の版で、フォールバックの Coding Agent を既に試したか (1 回だけ) */
+    escalated: Schema.optional(Schema.Boolean),
+    /** 失敗したときのレジストリ設定のハッシュ。設定が変われば原因を問わず再試行する */
+    configHash: Schema.optional(Schema.String),
+    /** 失敗する前に使っていたデモ。設定の変更で失敗した場合も、次はデモを書き直さずにビルドする */
+    demoKey: Schema.optional(Schema.String),
   }),
 )
 export type PreviewState = typeof PreviewState.Type
@@ -97,6 +145,12 @@ export const IndexState = Schema.Union(
     /** 画像ベクトルまで入っているか (プレビュー無しのアイテムはテキストのみ) */
     withImage: Schema.Boolean,
     indexedAt: Timestamp,
+    /**
+     * 埋め込んだ入力のハッシュ (v0.7)。同じなら埋め込み直さない (撮影方式の版上げや作り直しのたびに全件を払い直していた)。
+     * textHash = 検索用 Markdown、imageHash = 写っているもの (プレビューのソース × ビルド設定 × トークン)
+     */
+    textHash: Schema.optional(Schema.String),
+    imageHash: Schema.optional(Schema.String),
   }),
   Schema.TaggedStruct("Failed", FailureFields),
 )
@@ -117,7 +171,7 @@ export class EnrichmentState extends Schema.Class<EnrichmentState>("EnrichmentSt
 /**
  * エンリッチメントの各ステップ (Workflow の step に対応)。
  * - GenerateDoc:    LLM 1 回呼び出し (安い)
- * - BuildPreview:   サンドボックスの Coding Agent がデモを実装・ビルド (高い・遅い)
+ * - BuildPreview:   LLM がデモ (demo.tsx) を書き、コンテナのハーネスで決定的にビルド。ビルドエラーは LLM が修正
  * - CapturePreview: Browser Rendering でスクショ
  * - Index:          埋め込み + 検索インデックス
  */
@@ -138,9 +192,18 @@ export interface EnrichmentPolicy {
   readonly maxAttempts: number
   /** プレビューを作るか (プレビュービルダー未設定・予算方針で落とせるようにフラグ化) */
   readonly capturePreviews: boolean
+  /** ビルド方式の版 (BUILD_VERSION)。変わると既存のプレビューは全てデモ生成から作り直し */
+  readonly buildVersion: string
+  /** 撮影方式の版 (CAPTURE_VERSION)。変わると既存の HTML を撮り直すだけ */
+  readonly captureVersion: string
 }
 
-export const defaultEnrichmentPolicy: EnrichmentPolicy = { maxAttempts: 3, capturePreviews: true }
+export const defaultEnrichmentPolicy: EnrichmentPolicy = {
+  maxAttempts: 3,
+  capturePreviews: true,
+  buildVersion: BUILD_VERSION,
+  captureVersion: CAPTURE_VERSION,
+}
 
 type Failure = { readonly sourceHash: string; readonly attempts: number }
 
@@ -152,15 +215,47 @@ const isExhausted = (failure: Failure, hash: string, policy: EnrichmentPolicy): 
   failure.sourceHash === hash && failure.attempts >= policy.maxAttempts
 
 /**
+ * プレビューの失敗を再試行してよいか。原因で決める:
+ * registry / harness は同じソース・版では何度やっても同じなので再試行しない (ハッシュか BUILD_VERSION が変われば別物)。
+ * demo はモデルの揺らぎで通ることがあるので、エージェントをまだ試していなければ上限まで。infra (と旧データ) は上限まで。
+ */
+const canRetryPreview = (
+  failure: Failure & {
+    readonly cause?: PreviewFailureCause | undefined
+    readonly escalated?: boolean | undefined
+    readonly configHash?: string | undefined
+  },
+  hash: string,
+  policy: EnrichmentPolicy,
+  context: RegistryPreviewContext,
+): boolean => {
+  if (failure.sourceHash !== hash) return true
+  if (failure.configHash !== undefined && failure.configHash !== context.configHash) return true
+  switch (failure.cause) {
+    case "registry":
+    case "harness":
+      return false
+    case "demo":
+      return !failure.escalated && failure.attempts < policy.maxAttempts
+    default:
+      return failure.attempts < policy.maxAttempts
+  }
+}
+
+/**
  * 現在の状態とソースから、実行すべきステップを決める純粋関数。
  * - ハッシュが一致する成果物は再利用する (コスト 0)
  * - 非ビジュアルなアイテムはプレビューを作らない
  * - capture だけ失敗した場合は、HTML を作り直さずにスクショだけやり直す
+ * - レジストリのビルド設定が変わったらビルドし直す (デモは再利用する)。既定のトークンだけ変わったら撮り直すだけ
+ *   (HTML が実行時の注入に対応していなければビルドし直す)
+ * - レジストリのテーマを調べている間 (context.onHold) はプレビューを作らない
  */
 export const planEnrichment = (
   snapshot: Pick<ComponentSnapshot, "kind" | "contentHash">,
   state: EnrichmentState,
   policy: EnrichmentPolicy = defaultEnrichmentPolicy,
+  context: RegistryPreviewContext = emptyPreviewContext,
 ): ReadonlyArray<EnrichmentStep> => {
   const hash = snapshot.contentHash
   const steps: Array<EnrichmentStep> = []
@@ -173,26 +268,38 @@ export const planEnrichment = (
     (doc._tag === "Failed" && canRetry(doc, hash, policy))
   if (docWanted) steps.push(EnrichmentStep.GenerateDoc())
 
-  // --- preview
+  // --- preview (鮮度はソース × ビルド方式の版、スクショは更に撮影方式の版で判定する)
   const visual = policy.capturePreviews && previewabilityOf(snapshot.kind)._tag !== "NonVisual"
   const preview = state.preview
-  const capturedFresh = preview._tag === "Captured" && preview.sourceHash === hash
+  const previewHash = previewSourceHash(hash, policy.buildVersion)
+  const built = preview._tag === "Built" || preview._tag === "Captured" ? preview : null
+  const configFresh = (configHash: string | undefined) => configHash === undefined || configHash === context.configHash
+  const tokensFresh = preview._tag !== "Captured" || (preview.tokensHash ?? context.tokensHash) === context.tokensHash
+  const builtFresh =
+    built !== null &&
+    built.sourceHash === previewHash &&
+    configFresh(built.configHash) &&
+    // トークンが変わっても、実行時の注入に対応した HTML なら撮り直すだけで済む
+    (tokensFresh || built.runtimeTokens === true)
+  const capturedFresh =
+    preview._tag === "Captured" && builtFresh && preview.captureVersion === policy.captureVersion && tokensFresh
   const htmlFresh =
-    (preview._tag === "Built" && preview.sourceHash === hash) ||
-    capturedFresh ||
-    (preview._tag === "Failed" && preview.stage === "capture" && preview.sourceHash === hash)
+    builtFresh ||
+    (preview._tag === "Failed" && preview.stage === "capture" && preview.sourceHash === previewHash && configFresh(preview.configHash))
 
-  const skippedFresh = preview._tag === "Skipped" && preview.sourceHash === hash
+  const skippedFresh = preview._tag === "Skipped" && preview.sourceHash === previewHash
   const buildWanted =
     visual &&
+    !context.onHold &&
     !htmlFresh &&
     !skippedFresh &&
-    (preview._tag !== "Failed" || canRetry(preview, hash, policy))
+    (preview._tag !== "Failed" || canRetryPreview(preview, previewHash, policy, context))
   const captureWanted =
     visual &&
+    !context.onHold &&
     !capturedFresh &&
     (buildWanted ||
-      (htmlFresh && (preview._tag !== "Failed" || canRetry(preview, hash, policy))))
+      (htmlFresh && (preview._tag !== "Failed" || canRetryPreview(preview, previewHash, policy, context))))
   if (buildWanted) steps.push(EnrichmentStep.BuildPreview())
   if (captureWanted) steps.push(EnrichmentStep.CapturePreview())
 

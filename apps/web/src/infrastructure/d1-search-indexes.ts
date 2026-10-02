@@ -1,12 +1,14 @@
 import { Effect, Layer } from "effect"
-import type { ComponentId } from "@shadcn-explorer/core/domain"
+import type { ComponentId, ComponentKind, RegistryId } from "@shadcn-explorer/core/domain"
 import {
+  type ComponentVector,
   type IndexFilters,
   SearchBackendError,
   TextSearchIndex,
   VectorIndex,
+  type VectorModality,
 } from "@shadcn-explorer/core/ports"
-import { placeholders } from "./d1"
+import { type D1Client, placeholders } from "./d1"
 
 const fail = (backend: string) => (reason: unknown) =>
   new SearchBackendError({ backend, reason: String(reason).slice(0, 300) })
@@ -50,7 +52,7 @@ export const toTrigramQuery = (text: string): string | null => {
 }
 
 /** D1 FTS5 (bm25) によるキーワード検索。既定の TextSearchIndex */
-export const D1FtsTextIndex = (db: D1Database) =>
+export const D1FtsTextIndex = (db: D1Client) =>
   Layer.succeed(TextSearchIndex, {
     upsert: (doc) =>
       Effect.tryPromise({
@@ -90,7 +92,7 @@ export const D1FtsTextIndex = (db: D1Database) =>
   })
 
 /** ローカル開発用: D1 に保存したベクトルを総当たりでコサイン類似度検索する */
-export const D1LocalVectorIndex = (db: D1Database) =>
+export const D1LocalVectorIndex = (db: D1Client) =>
   Layer.succeed(VectorIndex, {
     upsert: (vectors) =>
       vectors.length === 0
@@ -120,6 +122,10 @@ export const D1LocalVectorIndex = (db: D1Database) =>
       const { where, binds } = filterSql(filters)
       where.push(`modality in (${placeholders(filters.modalities.length)})`)
       binds.push(...filters.modalities)
+      if (filters.excludeRegistryIds?.length) {
+        where.push(`registry_id not in (${placeholders(filters.excludeRegistryIds.length)})`)
+        binds.push(...filters.excludeRegistryIds)
+      }
       return Effect.tryPromise({
         try: () =>
           db
@@ -140,4 +146,30 @@ export const D1LocalVectorIndex = (db: D1Database) =>
         }),
       )
     },
+    vectorsOf: (componentId, modalities) =>
+      modalities.length === 0
+        ? Effect.succeed([])
+        : Effect.tryPromise({
+            try: () =>
+              db
+                .prepare(
+                  `select registry_id, kind, modality, vector from local_vectors
+                   where component_id = ? and modality in (${placeholders(modalities.length)})`,
+                )
+                .bind(componentId, ...modalities)
+                .all<{ registry_id: RegistryId; kind: ComponentKind; modality: VectorModality; vector: string }>(),
+            catch: fail("d1-vectors"),
+          }).pipe(
+            Effect.map(({ results }) =>
+              results.map(
+                (row): ComponentVector => ({
+                  componentId,
+                  registryId: row.registry_id,
+                  kind: row.kind,
+                  modality: row.modality,
+                  values: JSON.parse(row.vector) as Array<number>,
+                }),
+              ),
+            ),
+          ),
   })

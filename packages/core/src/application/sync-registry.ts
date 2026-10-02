@@ -1,13 +1,16 @@
-import { Clock, Data, Effect, Option, Schema } from "effect"
+import { Clock, Effect, Option, Schema } from "effect"
 import {
+  ComponentId,
   type ComponentSnapshot,
+  type ThemeCandidate,
   type Registry,
   type RegistryId,
-  type UserId,
   type WireRegistryItem,
   WireRegistryItem as WireRegistryItemSchema,
   completeSync,
   failSync,
+  isResyncDue,
+  oneLine,
   isStaleSync,
   needsEnrichment,
   planSync,
@@ -25,13 +28,13 @@ import {
   TextSearchIndex,
   VectorIndex,
 } from "../ports/index.js"
-import { NotRegistryOwner } from "./errors.js"
+import { RegistryNotFoundById } from "./errors.js"
+import { describeTheme, emit } from "./pipeline-log.js"
 import { itemSourceKey } from "./keys.js"
+import { resolveThemeOnSync } from "./registry-theme.js"
 import { fetchRegistryIndex } from "./resolve-registry.js"
 
-export class RegistryNotFoundById extends Data.TaggedError("RegistryNotFoundById")<{
-  readonly registryId: RegistryId
-}> {}
+export { RegistryNotFoundById } from "./errors.js"
 
 export interface SyncReport {
   readonly registryId: RegistryId
@@ -41,6 +44,8 @@ export interface SyncReport {
   readonly removed: number
   readonly scheduledForEnrichment: number
   readonly warnings: ReadonlyArray<string>
+  /** テーマが registry.json で決まらず、エージェントにインストール手順を読ませる必要がある (SyncRegistryWorkflow が続けて回す) */
+  readonly themeAgent: boolean
 }
 
 /** インデックスに内容 (files[].content) が含まれていればアイテム JSON の取得を省略する */
@@ -84,9 +89,11 @@ const beginSync = (registryId: RegistryId) =>
  * 1. registry.json と各アイテムを取得
  * 2. contentHash で差分を取り、変更分だけ保存
  * 3. 削除されたアイテムを検索インデックスからも消す
- * 4. 新規・変更分のエンリッチメントをスケジュール
+ * 4. テーマを判定する (registry.json のテーマ系アイテム。決まらなければエージェントへ)。エンリッチより先に決める
+ *    (決まる前にプレビューを作ると作り直しになる)
+ * 5. 新規・変更分のエンリッチメントをスケジュール
  */
-export const syncRegistry = (registryId: RegistryId) =>
+export const syncRegistry = (registryId: RegistryId, options: { readonly forceTheme?: boolean } = {}) =>
   Effect.gen(function* () {
     const registryRepo = yield* RegistryRepository
     const componentRepo = yield* ComponentRepository
@@ -97,6 +104,7 @@ export const syncRegistry = (registryId: RegistryId) =>
     const { budget } = yield* ExplorerConfig
 
     const registry = yield* beginSync(registryId)
+    yield* emit({ registryId, componentId: null, stage: "sync", status: "start", message: `Reading ${registry.locator.indexUrl}` })
 
     const body = Effect.gen(function* () {
       const index = yield* fetchRegistryIndex(registry.locator)
@@ -119,11 +127,18 @@ export const syncRegistry = (registryId: RegistryId) =>
       )
       const snapshots: Array<ComponentSnapshot> = []
       const itemsById = new Map<string, WireRegistryItem>()
-      for (const r of results) {
+      const themeCandidates: Array<ThemeCandidate> = []
+      // 取得に失敗したアイテムは「index から消えた」わけではない。削除扱いにすると、次の同期で新規として全額払い直すことになる
+      const unreachable = new Set<ComponentId>()
+      for (const [i, r] of results.entries()) {
         if (r._tag === "Right") {
           snapshots.push(r.right.snapshot)
           itemsById.set(r.right.snapshot.id, r.right.item)
-        } else warnings.push(`${r.left._tag}: ${"url" in r.left ? r.left.url : r.left.name} - ${r.left.reason}`)
+          themeCandidates.push({ item: r.right.item, url: r.right.snapshot.sourceUrl })
+        } else {
+          unreachable.add(ComponentId.make(`${registry.id}:${indexItems[i]!.name}`))
+          warnings.push(`${r.left._tag}: ${"url" in r.left ? r.left.url : r.left.name} - ${r.left.reason}`)
+        }
       }
       if (indexItems.length > 0 && snapshots.length === 0) {
         return yield* new RegistryFetchError({
@@ -132,7 +147,8 @@ export const syncRegistry = (registryId: RegistryId) =>
         })
       }
 
-      const plan = planSync(yield* componentRepo.hashesByRegistry(registry.id), snapshots)
+      const synced = planSync(yield* componentRepo.hashesByRegistry(registry.id), snapshots)
+      const plan = { ...synced, removed: synced.removed.filter((id) => !unreachable.has(id)) }
       const toEnrich = needsEnrichment(plan)
       // 生成時に再取得しないよう、変更分の registry-item.json 原本を保存しておく
       yield* Effect.forEach(
@@ -149,6 +165,19 @@ export const syncRegistry = (registryId: RegistryId) =>
           discard: true,
         }).pipe(Effect.catchAll((e) => Effect.sync(() => warnings.push(`index cleanup: ${e.reason}`))))
       }
+      const theme = yield* resolveThemeOnSync(registry.id, themeCandidates, { force: options.forceTheme === true }).pipe(
+        Effect.catchAll((e) =>
+          e._tag === "PersistenceError"
+            ? Effect.fail(e)
+            : Effect.sync(() => {
+                warnings.push(`theme: ${e._tag}`)
+                return { needsAgent: false }
+              }),
+        ),
+      )
+      if ("theme" in theme && JSON.stringify(theme.theme) !== JSON.stringify(registry.theme)) {
+        yield* emit({ registryId, componentId: null, stage: "theme", status: theme.theme._tag === "Failed" ? "warn" : "ok", message: describeTheme(theme.theme) })
+      }
       if (toEnrich.length > 0) yield* scheduler.scheduleEnrichment(toEnrich.map((s) => s.id))
 
       return {
@@ -159,6 +188,7 @@ export const syncRegistry = (registryId: RegistryId) =>
         removed: plan.removed.length,
         scheduledForEnrichment: toEnrich.length,
         warnings,
+        themeAgent: theme.needsAgent,
         itemCount: snapshots.length,
       }
     })
@@ -168,47 +198,67 @@ export const syncRegistry = (registryId: RegistryId) =>
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis
           const reason = "reason" in error ? String(error.reason) : error._tag
-          const failed = yield* failSync(registry, now, reason)
+          // テーマの判定が設定を更新しているので読み直してから遷移する
+          const latest = Option.getOrElse(yield* registryRepo.findById(registry.id), () => registry)
+          const failed = yield* failSync(latest, now, reason)
           yield* registryRepo.update(failed)
+          yield* emit({ registryId, componentId: null, stage: "sync", status: "error", message: `Sync failed: ${oneLine(reason)}` })
         }).pipe(Effect.ignore),
       ),
       Effect.flatMap(({ itemCount, ...report }) =>
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis
-          yield* registryRepo.update(yield* completeSync(registry, now, itemCount))
+          const latest = Option.getOrElse(yield* registryRepo.findById(registry.id), () => registry)
+          yield* registryRepo.update(yield* completeSync(latest, now, itemCount))
+          const changes = report.added + report.changed + report.removed
+          yield* emit({
+            registryId,
+            componentId: null,
+            stage: "sync",
+            status: "ok",
+            message:
+              changes === 0
+                ? `Synced ${itemCount} items · nothing changed`
+                : `Synced ${itemCount} items · ${report.added} new, ${report.changed} changed, ${report.removed} removed`,
+            detail: { items: itemCount, added: report.added, changed: report.changed, removed: report.removed },
+          })
           return report satisfies SyncReport
         }),
       ),
     )
   })
 
-/** cron から呼ばれる: 同期可能な全レジストリの再同期を投入する (差分がなければ AI コストは発生しない) */
+/**
+ * cron (日次) から呼ばれる: 前回の同期から間隔 (7 日) が過ぎたレジストリの再同期を投入する。
+ * 古い順に resyncPerRun 件まで (公式ディレクトリを全部取り込むと 300 以上になるので、夜ごとに分散させる)。
+ * 未同期 (Pending)・失敗・詰まった同期は間隔を待たずに投入する。差分がなければ AI コストは発生しない
+ */
 export const scheduleResyncAll = Effect.gen(function* () {
   const repo = yield* RegistryRepository
   const scheduler = yield* JobScheduler
-  const { syncTimeoutMs } = yield* ExplorerConfig
+  const { syncTimeoutMs, lifecycle } = yield* ExplorerConfig
   const now = yield* Clock.currentTimeMillis
-  const targets = (yield* repo.list()).filter(
-    (r) =>
-      r.status._tag === "Active" ||
-      r.status._tag === "Failed" ||
-      r.status._tag === "Pending" ||
-      isStaleSync(r, now, syncTimeoutMs),
-  )
+  const lastSynced = (r: Registry) =>
+    r.status._tag === "Active" || r.status._tag === "Failed" || r.status._tag === "Syncing" ? r.status.lastSyncedAt : null
+  const targets = (yield* repo.list())
+    .filter(
+      (r) =>
+        r.status._tag === "Pending" ||
+        isStaleSync(r, now, syncTimeoutMs) ||
+        ((r.status._tag === "Active" || r.status._tag === "Failed") && isResyncDue(lastSynced(r), now, lifecycle.resyncIntervalMs)),
+    )
+    .sort((a, b) => (lastSynced(a) ?? 0) - (lastSynced(b) ?? 0))
+    .slice(0, lifecycle.resyncPerRun)
   yield* Effect.forEach(targets, (r) => scheduler.scheduleSync(r.id), { discard: true })
   return targets.length
 })
 
-
-/** 手動の再同期要求。登録者 (または所有者なしの公開レジストリ) のみ許可する */
-export const requestResync = (registryId: RegistryId, requester: UserId) =>
+/** 手動の再同期要求。誰に許すか (現在は運営者のみ) は呼び出し側 (presentation) が決める */
+export const requestResync = (registryId: RegistryId) =>
   Effect.gen(function* () {
     const repo = yield* RegistryRepository
     const scheduler = yield* JobScheduler
     const registry = yield* repo.findById(registryId)
     if (Option.isNone(registry)) return yield* new RegistryNotFoundById({ registryId })
-    if (registry.value.ownerId !== null && registry.value.ownerId !== requester) {
-      return yield* new NotRegistryOwner({ registryId })
-    }
     yield* scheduler.scheduleSync(registryId)
   })

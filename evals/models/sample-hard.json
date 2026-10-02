@@ -1,0 +1,188 @@
+[
+ {
+  "id": "8bitcn:calendar",
+  "kind": "component",
+  "sourceUrl": "https://www.8bitcn.com/r/calendar.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:carousel",
+  "kind": "component",
+  "sourceUrl": "https://www.8bitcn.com/r/carousel.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:chapter-intro",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/chapter-intro.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:context-menu",
+  "kind": "component",
+  "sourceUrl": "https://www.8bitcn.com/r/context-menu.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:dashboard-01",
+  "kind": "page",
+  "sourceUrl": "https://www.8bitcn.com/r/dashboard-01.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:empty",
+  "kind": "component",
+  "sourceUrl": "https://www.8bitcn.com/r/empty.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:item",
+  "kind": "component",
+  "sourceUrl": "https://www.8bitcn.com/r/item.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:resizable",
+  "kind": "component",
+  "sourceUrl": "https://www.8bitcn.com/r/resizable.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:theme-selector",
+  "kind": "component",
+  "sourceUrl": "https://www.8bitcn.com/r/theme-selector.json",
+  "group": "repair"
+ },
+ {
+  "id": "kokonutui:flow-field",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/flow-field.json",
+  "group": "repair"
+ },
+ {
+  "id": "kokonutui:particle-button",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/particle-button.json",
+  "group": "repair"
+ },
+ {
+  "id": "kokonutui:profile-dropdown",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/profile-dropdown.json",
+  "group": "repair"
+ },
+ {
+  "id": "kokonutui:shape-hero",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/shape-hero.json",
+  "group": "repair"
+ },
+ {
+  "id": "kokonutui:social-button",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/social-button.json",
+  "group": "repair"
+ },
+ {
+  "id": "kokonutui:team-selector",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/team-selector.json",
+  "group": "repair"
+ },
+ {
+  "id": "kokonutui:tweet-card",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/tweet-card.json",
+  "group": "repair"
+ },
+ {
+  "id": "neobrutalism:calendar",
+  "kind": "ui",
+  "sourceUrl": "https://neobrutalism.com/r/calendar.json",
+  "group": "repair"
+ },
+ {
+  "id": "neobrutalism:carousel",
+  "kind": "ui",
+  "sourceUrl": "https://neobrutalism.com/r/carousel.json",
+  "group": "repair"
+ },
+ {
+  "id": "neobrutalism:dropdown-menu",
+  "kind": "ui",
+  "sourceUrl": "https://neobrutalism.com/r/dropdown-menu.json",
+  "group": "repair"
+ },
+ {
+  "id": "neobrutalism:sidebar",
+  "kind": "ui",
+  "sourceUrl": "https://neobrutalism.com/r/sidebar.json",
+  "group": "repair"
+ },
+ {
+  "id": "neobrutalism:toggle-group",
+  "kind": "ui",
+  "sourceUrl": "https://neobrutalism.com/r/toggle-group.json",
+  "group": "repair"
+ },
+ {
+  "id": "8bitcn:character-sheet",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/character-sheet.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:player-profile-card",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/player-profile-card.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:not-found-crate-pusher",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/not-found-crate-pusher.json",
+  "group": "big"
+ },
+ {
+  "id": "kokonutui:bento-grid",
+  "kind": "component",
+  "sourceUrl": "https://kokonutui.com/r/bento-grid.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:not-found-brick-breaker",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/not-found-brick-breaker.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:audio-settings",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/audio-settings.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:login-page",
+  "kind": "page",
+  "sourceUrl": "https://www.8bitcn.com/r/login-page.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:quest-log",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/quest-log.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:leaderboard",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/leaderboard.json",
+  "group": "big"
+ },
+ {
+  "id": "8bitcn:save-slots",
+  "kind": "block",
+  "sourceUrl": "https://www.8bitcn.com/r/save-slots.json",
+  "group": "big"
+ }
+]

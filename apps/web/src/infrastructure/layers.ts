@@ -1,26 +1,48 @@
 import { Effect, Layer } from "effect"
-import { FakeDocWriter, FakeEmbedder, FakePreviewBuilder, FakePreviewRenderer } from "@shadcn-explorer/core/testing"
+import {
+  FakeDemoWriter,
+  FakeDocWriter,
+  FakeEmbedder,
+  FakePreviewAgent,
+  FakePreviewCompiler,
+  FakePreviewRenderer,
+  FakeThemeAgent,
+} from "@shadcn-explorer/core/testing"
 import {
   AgentError,
+  DemoWriter,
   DocWriter,
   Embedder,
   EmbeddingError,
-  PreviewBuilder,
+  PreviewAgent,
+  PreviewCompiler,
   PreviewRenderer,
   RenderError,
+  ThemeAgent,
 } from "@shadcn-explorer/core/ports"
-import { AgentsPreviewBuilder, makeAgentsTransport } from "./agents-preview-builder"
+import { AgentsPreviewAgent, makeAgentsTransport } from "./agents-preview-agent"
+import { AgentsThemeAgent } from "./agents-theme-agent"
 import { AiSearchTextIndex } from "./ai-search-text-index"
-import { BrowserPreviewRenderer } from "./browser-preview-renderer"
 import { makeExplorerConfig } from "./config"
-import { D1ComponentRepository, D1RegistryRepository, D1UsageLedger } from "./d1-repositories"
+import type { D1Client } from "./d1"
+import {
+  D1AgentRunLedger,
+  D1ComponentRepository,
+  D1DirectoryRepository,
+  D1PipelineLog,
+  D1RegistryRepository,
+  D1UsageLedger,
+} from "./d1-repositories"
 import { D1FtsTextIndex, D1LocalVectorIndex } from "./d1-search-indexes"
 import { GeminiEmbedder } from "./gemini-embedder"
-import { type InlineJob, InlineJobScheduler, WorkflowJobScheduler } from "./job-scheduler"
+import { CloudflareJobScheduler, type InlineJob, InlineJobScheduler } from "./job-scheduler"
+import { OpenAIDemoWriter } from "./openai-demo-writer"
 import { OpenAIDocWriter } from "./openai-doc-writer"
 import { R2BlobStore } from "./r2-blob-store"
+import { SandboxPreviewCompiler, SandboxPreviewRenderer } from "./sandbox-preview-compiler"
 import { FetchRegistryHttp } from "./registry-http"
 import { VectorizeVectorIndex } from "./vectorize-vector-index"
+import { NoDocsReader, type PlatformRpc, WebforaiDocsReader } from "./webforai-docs-reader"
 
 export type ExplorerMode = "cloudflare" | "local"
 
@@ -31,7 +53,22 @@ const unconfiguredDocWriter = Layer.succeed(DocWriter, {
   model: "unconfigured",
   write: () => Effect.fail(new AgentError({ reason: "OPENAI_API_KEY が設定されていません", retryable: false })),
 })
-const unconfiguredPreviewBuilder = Layer.succeed(PreviewBuilder, {
+const unconfiguredDemoWriter = Layer.succeed(DemoWriter, {
+  model: "unconfigured",
+  write: () => Effect.fail(new AgentError({ reason: "OPENAI_API_KEY が設定されていません", retryable: false })),
+  repair: () => Effect.fail(new AgentError({ reason: "OPENAI_API_KEY が設定されていません", retryable: false })),
+})
+const unconfiguredCompiler = Layer.succeed(PreviewCompiler, {
+  name: "unconfigured",
+  compile: () => Effect.fail(new AgentError({ reason: "SANDBOX binding がありません", retryable: false })),
+})
+const unconfiguredAgent = Layer.succeed(PreviewAgent, {
+  name: "unconfigured",
+  start: () => Effect.fail(new AgentError({ reason: "Agents API が設定されていません", retryable: false })),
+  poll: () => Effect.fail(new AgentError({ reason: "Agents API が設定されていません", retryable: false })),
+  cancel: () => Effect.void,
+})
+const unconfiguredThemeAgent = Layer.succeed(ThemeAgent, {
   name: "unconfigured",
   start: () => Effect.fail(new AgentError({ reason: "Agents API が設定されていません", retryable: false })),
   poll: () => Effect.fail(new AgentError({ reason: "Agents API が設定されていません", retryable: false })),
@@ -44,7 +81,7 @@ const unconfiguredEmbedder = Layer.succeed(Embedder, {
   embedImage: () => Effect.fail(new EmbeddingError({ reason: "GEMINI_API_KEY が設定されていません" })),
 })
 const unconfiguredRenderer = Layer.succeed(PreviewRenderer, {
-  capture: () => Effect.fail(new RenderError({ reason: "BROWSER binding がありません" })),
+  capture: () => Effect.fail(new RenderError({ reason: "SANDBOX binding がありません" })),
 })
 
 /** ドキュメント: OpenAI Responses API (gpt-6-luna) → (local のみ) フェイク */
@@ -54,20 +91,68 @@ const docWriterLayer = (env: Env, mode: ExplorerMode) => {
       apiKey: env.OPENAI_API_KEY,
       model: env.OPENAI_MODEL || "gpt-6-luna",
       ...(env.OPENAI_BASE_URL ? { baseUrl: env.OPENAI_BASE_URL } : {}),
+      ...(env.AI_GATEWAY_TOKEN ? { gatewayToken: env.AI_GATEWAY_TOKEN } : {}),
     })
   }
   return mode === "local" ? FakeDocWriter() : unconfiguredDocWriter
 }
 
 /**
- * プレビュー: サンドボックス Agent (CF-Open-Agents-API) → (local のみ) フェイク。
- * どちらも無い本番環境ではプレビュー自体を無効化する (enabled=false → planEnrichment が計画しない)。
+ * プレビュー: デモを書く LLM (OpenAI) + ビルド・撮影用コンテナ (Cloudflare Sandbox) + フォールバックの Coding Agent。
+ * - local: フェイク (Docker もキーも不要)
+ * - cloudflare: LLM とコンテナが揃っていなければプレビュー自体を無効化する (enabled=false → planEnrichment が計画しない)。
+ *   エージェント (AGENTS binding) は任意。無ければ決まった手順だけで、直せないものは失敗として表示する
  */
-const previewBuilderLayer = (env: Env, mode: ExplorerMode) => {
-  const transport = makeAgentsTransport(env, mode === "cloudflare")
-  if (transport) return { layer: AgentsPreviewBuilder({ transport, preset: env.AGENT_PRESET }), enabled: true, fake: false }
-  if (mode === "local") return { layer: FakePreviewBuilder(), enabled: true, fake: true }
-  return { layer: unconfiguredPreviewBuilder, enabled: false, fake: false }
+const previewLayers = (env: Env, mode: ExplorerMode) => {
+  if (mode === "local") {
+    return {
+      // テーマのエージェントはフェイク (手順が見つからないと答える)。ローカルでは既定で回さない (themeAgent: false)
+      layer: Layer.mergeAll(FakeDemoWriter(), FakePreviewCompiler(), FakePreviewRenderer, FakePreviewAgent(), FakeThemeAgent(), NoDocsReader),
+      enabled: true,
+      fake: true,
+      agent: true,
+      themeAgent: false,
+    }
+  }
+  if (env.OPENAI_API_KEY && env.SANDBOX) {
+    const writer = OpenAIDemoWriter({
+      apiKey: env.OPENAI_API_KEY,
+      model: env.OPENAI_MODEL || "gpt-6-luna",
+      ...(env.OPENAI_BASE_URL ? { baseUrl: env.OPENAI_BASE_URL } : {}),
+      ...(env.AI_GATEWAY_TOKEN ? { gatewayToken: env.AI_GATEWAY_TOKEN } : {}),
+    })
+    const transport = makeAgentsTransport(env, true)
+    const agent = transport ? AgentsPreviewAgent({ transport, preset: env.AGENT_PRESET || "shadcn-explorer" }) : unconfiguredAgent
+    const themeAgent = transport ? AgentsThemeAgent({ transport, preset: env.AGENT_PRESET || "shadcn-explorer" }) : unconfiguredThemeAgent
+    return {
+      layer: Layer.mergeAll(
+        writer,
+        SandboxPreviewCompiler(env.SANDBOX),
+        SandboxPreviewRenderer(env.SANDBOX),
+        agent,
+        themeAgent,
+        WebforaiDocsReader(env.WEBFORAI as unknown as PlatformRpc),
+      ),
+      enabled: true,
+      fake: false,
+      agent: transport !== null,
+      themeAgent: transport !== null,
+    }
+  }
+  return {
+    layer: Layer.mergeAll(
+      unconfiguredDemoWriter,
+      unconfiguredCompiler,
+      unconfiguredRenderer,
+      unconfiguredAgent,
+      unconfiguredThemeAgent,
+      NoDocsReader,
+    ),
+    enabled: false,
+    fake: false,
+    agent: false,
+    themeAgent: false,
+  }
 }
 
 const embedderLayer = (env: Env, mode: ExplorerMode) => {
@@ -83,39 +168,43 @@ const embedderLayer = (env: Env, mode: ExplorerMode) => {
   return mode === "local" ? FakeEmbedder : unconfiguredEmbedder
 }
 
-const rendererLayer = (env: Env, mode: ExplorerMode) => {
-  if (mode === "local") return FakePreviewRenderer
-  return env.BROWSER ? BrowserPreviewRenderer(env.BROWSER) : unconfiguredRenderer
-}
-
 /**
  * env から全ポートの実装を組み立てる (Composition Root)。
- * - cloudflare: D1 / R2 / D1 FTS5 (or AI Search) / Vectorize / Browser Rendering / OpenAI / Agents API / Workflows
+ * - cloudflare: D1 / R2 / D1 FTS5 (or AI Search) / Vectorize / OpenAI / Sandbox (ビルド + Playwright) / Agents API / Workflows
  * - local:      D1 / R2 (miniflare) + D1 FTS5 + D1 ベクトル + フェイク AI (OPENAI_API_KEY があれば実 LLM)
  */
-export const makeAppLayer = (env: Env, dispatch: (job: InlineJob) => void) => {
+export const makeAppLayer = (env: Env, dispatch: (job: InlineJob) => void, options: { readonly db?: D1Client } = {}) => {
   const mode = modeOf(env)
+  const db = options.db ?? env.DB
   const textIndex = env.TEXT_SEARCH_BACKEND === "ai-search" && mode === "cloudflare"
     ? AiSearchTextIndex(env.COMPONENT_SEARCH)
-    : D1FtsTextIndex(env.DB)
-  const vectorIndex = mode === "local" ? D1LocalVectorIndex(env.DB) : VectorizeVectorIndex(env.VISUAL_INDEX)
-  const scheduler = mode === "local" ? InlineJobScheduler(dispatch) : WorkflowJobScheduler(env)
-  const preview = previewBuilderLayer(env, mode)
+    : D1FtsTextIndex(db)
+  const vectorIndex = mode === "local" ? D1LocalVectorIndex(db) : VectorizeVectorIndex(env.VISUAL_INDEX)
+  // JOB_RUNNER=inline: キュー・Workflow を使わず、その場で回す
+  const scheduler = mode === "local" || env.JOB_RUNNER === "inline" ? InlineJobScheduler(dispatch) : CloudflareJobScheduler(env)
+  const preview = previewLayers(env, mode)
 
   return Layer.mergeAll(
     FetchRegistryHttp,
-    D1RegistryRepository(env.DB),
-    D1ComponentRepository(env.DB),
-    D1UsageLedger(env.DB),
+    D1RegistryRepository(db),
+    D1ComponentRepository(db),
+    D1DirectoryRepository(db),
+    D1PipelineLog(db),
+    D1UsageLedger(db),
+    D1AgentRunLedger(db),
     R2BlobStore(env.MEDIA),
     docWriterLayer(env, mode),
     preview.layer,
-    rendererLayer(env, mode),
     embedderLayer(env, mode),
     textIndex,
     vectorIndex,
     scheduler,
-    makeExplorerConfig(env, { previewsEnabled: preview.enabled, fakePreviewBuilder: preview.fake }),
+    makeExplorerConfig(env, {
+      previewsEnabled: preview.enabled,
+      fakePreviewBuilder: preview.fake,
+      agentEnabled: preview.agent,
+      themeAgentEnabled: preview.themeAgent,
+    }),
   )
 }
 

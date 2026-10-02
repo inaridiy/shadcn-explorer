@@ -13,8 +13,16 @@ import {
   completeSync,
   decideBudget,
   failSync,
+  BUILD_VERSION,
+  CAPTURE_VERSION,
+  validateManifest,
+  demoLayoutOf,
+  importPathOf,
+  itemImportPaths,
+  lintDemo,
   planEnrichment,
   planSync,
+  previewSourceHash,
   previewabilityOf,
   reciprocalRankFusion,
   startSync,
@@ -181,7 +189,24 @@ describe("planEnrichment", () => {
   const snapshot = { kind: "ui" as const, contentHash: "h1" }
   const tags = (steps: ReadonlyArray<{ _tag: string }>) => steps.map((s) => s._tag)
   const state = (patch: Partial<EnrichmentState>) => new EnrichmentState({ ...EnrichmentState.initial, ...patch })
-  const captured = { _tag: "Captured" as const, sourceHash: "h1", lightKey: "l", darkKey: "d", htmlKey: "x", capturedAt: 1 }
+  // プレビューの鮮度キーはソース × 生成方式の版
+  const P = previewSourceHash("h1", BUILD_VERSION)
+  const captured = {
+    _tag: "Captured" as const,
+    sourceHash: P,
+    lightKey: "l",
+    darkKey: "d",
+    htmlKey: "x",
+    captureVersion: CAPTURE_VERSION,
+    capturedAt: 1,
+  }
+  const policy = (patch: Partial<{ capturePreviews: boolean; buildVersion: string; captureVersion: string }> = {}) => ({
+    maxAttempts: 3,
+    capturePreviews: true,
+    buildVersion: BUILD_VERSION,
+    captureVersion: CAPTURE_VERSION,
+    ...patch,
+  })
 
   it("初回はドキュメント生成 → プレビュービルド → 撮影 → インデックス", () => {
     expect(tags(planEnrichment(snapshot, EnrichmentState.initial))).toEqual([
@@ -222,7 +247,7 @@ describe("planEnrichment", () => {
   it("撮影だけ失敗した場合は HTML を作り直さない", () => {
     const s = state({
       doc: { _tag: "Generated", sourceHash: "h1", agentPreset: "x", generatedAt: 1 },
-      preview: { _tag: "Failed", stage: "capture", sourceHash: "h1", error: "x", attempts: 1, failedAt: 1 },
+      preview: { _tag: "Failed", stage: "capture", sourceHash: P, error: "x", attempts: 1, failedAt: 1 },
       index: { _tag: "Indexed", sourceHash: "h1", withImage: false, indexedAt: 1 },
     })
     expect(tags(planEnrichment(snapshot, s))).toEqual(["CapturePreview", "Index"])
@@ -231,7 +256,7 @@ describe("planEnrichment", () => {
   it("ビルダーが不要と判断したプレビューは同じソースでは再試行しない", () => {
     const s = state({
       doc: { _tag: "Generated", sourceHash: "h1", agentPreset: "x", generatedAt: 1 },
-      preview: { _tag: "Skipped", reason: "no", sourceHash: "h1" },
+      preview: { _tag: "Skipped", reason: "no", sourceHash: P },
       index: { _tag: "Indexed", sourceHash: "h1", withImage: false, indexedAt: 1 },
     })
     expect(planEnrichment(snapshot, s)).toEqual([])
@@ -249,10 +274,140 @@ describe("planEnrichment", () => {
   })
 
   it("capturePreviews=false ならプレビューを作らない", () => {
-    expect(tags(planEnrichment(snapshot, EnrichmentState.initial, { maxAttempts: 3, capturePreviews: false }))).toEqual([
-      "GenerateDoc",
+    expect(tags(planEnrichment(snapshot, EnrichmentState.initial, policy({ capturePreviews: false })))).toEqual(["GenerateDoc", "Index"])
+  })
+
+  const fresh = () =>
+    state({
+      doc: { _tag: "Generated", sourceHash: "h1", agentPreset: "x", generatedAt: 1 },
+      preview: captured,
+      index: { _tag: "Indexed", sourceHash: "h1", withImage: true, indexedAt: 1 },
+    })
+
+  it("ビルド方式の版が上がると、ソースが同じでもデモ生成から作り直す", () => {
+    expect(tags(planEnrichment(snapshot, fresh(), policy({ buildVersion: "demo-v999" })))).toEqual([
+      "BuildPreview",
+      "CapturePreview",
       "Index",
     ])
+  })
+
+  it("撮影方式の版だけが上がったら、ビルドはそのままで撮り直す (と画像ベクトルの入れ直し)", () => {
+    expect(tags(planEnrichment(snapshot, fresh(), policy({ captureVersion: "cap-v999" })))).toEqual(["CapturePreview", "Index"])
+    // v0.3 以前の Captured (captureVersion 無し) も撮り直しの対象
+    const { captureVersion: _, ...legacy } = captured
+    expect(tags(planEnrichment(snapshot, state({ ...fresh(), preview: legacy })))).toEqual(["CapturePreview", "Index"])
+  })
+
+  describe("失敗の原因で再試行を決める", () => {
+    const failed = (patch: Record<string, unknown>) =>
+      state({
+        ...fresh(),
+        preview: { _tag: "Failed", stage: "build", sourceHash: P, error: "x", attempts: 1, failedAt: 1, ...patch } as never,
+      })
+    const retries = (patch: Record<string, unknown>) => tags(planEnrichment(snapshot, failed(patch))).includes("BuildPreview")
+
+    it("registry / harness は同じソース・版では再試行しない", () => {
+      expect(retries({ cause: "registry" })).toBe(false)
+      expect(retries({ cause: "harness" })).toBe(false)
+    })
+    it("demo はエージェントを試していなければ上限まで再試行する", () => {
+      expect(retries({ cause: "demo" })).toBe(true)
+      expect(retries({ cause: "demo", escalated: true })).toBe(false)
+      expect(retries({ cause: "demo", attempts: 3 })).toBe(false)
+    })
+    it("infra と旧データ (原因なし) は上限まで再試行する", () => {
+      expect(retries({ cause: "infra", attempts: 2 })).toBe(true)
+      expect(retries({})).toBe(true)
+      expect(retries({ cause: "infra", attempts: 3 })).toBe(false)
+    })
+    it("ソースが変われば原因に関わらずやり直す", () => {
+      const changed = planEnrichment({ ...snapshot, contentHash: "h2" }, failed({ cause: "registry" }))
+      expect(tags(changed)).toContain("BuildPreview")
+    })
+  })
+})
+
+describe("build manifest", () => {
+  it("許可リストの操作だけを受け付ける", () => {
+    expect(
+      validateManifest({
+        actions: [
+          { type: "pin", package: "@tanstack/react-table", version: "^8.21.0", reason: "v9 removed getCoreRowModel" },
+          { type: "writeFile", path: "retro.css", content: ".retro{}" },
+          { type: "alias", specifier: "@/components/ui/8bit/styles/retro.css", file: "retro.css" },
+          { type: "wrap", file: "nuqs-adapter.tsx" },
+          { type: "addItem", spec: "@8bitcn/button" },
+        ],
+      }),
+    ).toEqual([])
+  })
+
+  it("compat 以外へのファイル書き込み・不正なパッケージ名・多すぎる依存を弾く", () => {
+    expect(validateManifest({ actions: [{ type: "writeFile", path: "../main.tsx", content: "" }] })).toHaveLength(1)
+    expect(validateManifest({ actions: [{ type: "add", package: "evil; rm -rf /", version: "1" }] })).toHaveLength(1)
+    const many = Array.from({ length: 6 }, (_, i) => ({ type: "add" as const, package: `p${i}`, version: "1" }))
+    expect(validateManifest({ actions: many }).join()).toMatch(/at most 5/)
+  })
+})
+
+describe("demo", () => {
+  it("ブロック・ページは全幅、それ以外は docs と同じ中央寄せの枠", () => {
+    expect(demoLayoutOf("ui")).toBe("centered")
+    expect(demoLayoutOf("component")).toBe("centered")
+    expect(demoLayoutOf("block")).toBe("fullwidth")
+    expect(demoLayoutOf("page")).toBe("fullwidth")
+  })
+
+  it("シンプルなデモは lint を通る", () => {
+    const code = `import { Button } from "@/components/ui/button"
+
+export default function Demo() {
+  return <Button variant="outline">Button</Button>
+}`
+    expect(lintDemo(code)).toEqual([])
+  })
+
+  it("ランディングページ風の装飾・非決定的な値・外部通信を弾く", () => {
+    const code = `export default function Demo() {
+  const id = Math.random()
+  return (
+    <main className="min-h-screen">
+      <h1>PRESS START</h1>
+      <button onClick={toggleTheme}>Dark mode</button>
+      <img src="https://example.com/a.png" />
+    </main>
+  )
+}`
+    const problems = lintDemo(code).join("\n")
+    expect(problems).toMatch(/headings/)
+    expect(problems).toMatch(/page chrome/)
+    expect(problems).toMatch(/theme toggle/)
+    expect(problems).toMatch(/deterministic/)
+    expect(problems).toMatch(/remote URLs/)
+    expect(problems).toMatch(/screen-height/)
+  })
+
+  it("アイテム自身を import しないデモは弾く (素の shadcn 部品への差し替えを防ぐ)", () => {
+    const item = { files: [{ path: "components/ui/8bit/calendar.tsx", type: "registry:component", target: "components/ui/8bit/calendar.tsx" }] }
+    const imports = itemImportPaths(item)
+    expect(imports).toEqual(["@/components/ui/8bit/calendar"])
+    const plain = `import { Calendar } from "@/components/ui/calendar"\nexport default function Demo() { return <Calendar /> }`
+    const own = `import { Calendar } from "@/components/ui/8bit/calendar"\nexport default function Demo() { return <Calendar /> }`
+    expect(lintDemo(plain, imports).join(" ")).toMatch(/registry item itself/)
+    expect(lintDemo(own, imports)).toEqual([])
+  })
+
+  it("import パスは target、無ければ type ごとの既定の置き場所から推定する", () => {
+    expect(importPathOf({ path: "registry/ui/glow-button.tsx", type: "registry:ui" })).toBe("@/components/ui/glow-button")
+    expect(importPathOf({ path: "x/hero.tsx", type: "registry:block" })).toBe("@/components/hero")
+    expect(importPathOf({ path: "x/use-a.ts", type: "registry:hook" })).toBe("@/hooks/use-a")
+    expect(importPathOf({ path: "x/p.tsx", type: "registry:page", target: "~/src/app/login/page.tsx" })).toBe("@/app/login/page")
+    expect(importPathOf({ path: "x/retro.css", type: "registry:component" })).toBeNull()
+  })
+
+  it("default export が無いデモは弾く", () => {
+    expect(lintDemo("export function Demo() { return null }")).toHaveLength(1)
   })
 })
 
@@ -275,7 +430,7 @@ describe("decideBudget", () => {
     expect(decideBudget(steps, usd(1), testConfig.budget, testConfig.prices)._tag).toBe("Proceed")
   })
 
-  it("ソフトリミット超過ならプレビュー (Agent + Browser) を後回しにし、ドキュメントとインデックスは続ける", () => {
+  it("ソフトリミット超過ならプレビュー (デモ生成・ビルド + Browser) を後回しにし、ドキュメントとインデックスは続ける", () => {
     const decision = decideBudget(steps, usd(40.5), testConfig.budget, testConfig.prices)
     expect(decision._tag).toBe("Degrade")
     if (decision._tag === "Degrade") {
@@ -285,7 +440,7 @@ describe("decideBudget", () => {
   })
 
   it("ハードリミット超過なら Defer", () => {
-    expect(decideBudget(steps, usd(49.99), testConfig.budget, testConfig.prices)._tag).toBe("Defer")
+    expect(decideBudget(steps, usd(49.999), testConfig.budget, testConfig.prices)._tag).toBe("Defer")
   })
 })
 

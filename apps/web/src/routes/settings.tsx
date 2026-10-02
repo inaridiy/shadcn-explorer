@@ -6,10 +6,8 @@ import { buttonVariants, Button } from "~/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card"
 import { Input } from "~/components/ui/input"
 import { authClient } from "~/lib/auth-client"
-import { usageSummaryFn } from "~/server/usage"
 
 export const Route = createFileRoute("/settings")({
-  loader: () => usageSummaryFn(),
   component: SettingsPage,
 })
 
@@ -61,10 +59,8 @@ function ApiKeys() {
 }
 
 function SettingsPage() {
-  const usage = Route.useLoaderData()
   const { user } = Route.useRouteContext()
   const origin = typeof window === "undefined" ? "https://shadcn-explorer.example.com" : window.location.origin
-  const ratio = Math.min(1, usage.totalUsd / usage.budgetUsd)
 
   return (
     <div className="flex flex-col gap-6 pt-10">
@@ -72,45 +68,21 @@ function SettingsPage() {
         <h1 className="text-3xl font-bold tracking-tight">API & MCP</h1>
         <p className="text-muted-foreground">Let your coding agent search every shadcn registry by itself.</p>
       </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>API keys</CardTitle>
-            <CardDescription>Optional. Anonymous REST/MCP reads are limited to 30 requests / minute per IP; a key raises it to 60 / minute per key and is required for writes.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {user ? (
-              <ApiKeys />
-            ) : (
-              <Link to="/login" search={{ redirect: "/settings" }} className={buttonVariants({ variant: "outline" })}>
-                Sign in to create keys
-              </Link>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>This month's processing cost</CardTitle>
-            <CardDescription>Coding agent, Browser Rendering and embeddings. Budget: ${usage.budgetUsd}</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="h-2 overflow-hidden rounded-full bg-muted">
-              <div className="h-full bg-brand" style={{ width: `${ratio * 100}%` }} />
-            </div>
-            <p className="text-2xl font-semibold">${usage.totalUsd.toFixed(2)}</p>
-            <ul className="text-sm text-muted-foreground">
-              {usage.categories.map((c) => (
-                <li key={c.category} className="flex justify-between">
-                  <span>{c.category}</span>
-                  <span>
-                    ${c.usd.toFixed(3)} · {c.count} runs
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>API keys</CardTitle>
+          <CardDescription>Optional. Anonymous REST/MCP reads are limited to 30 requests / minute per IP; a key raises it to 60 / minute per key and is required for writes.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {user ? (
+            <ApiKeys />
+          ) : (
+            <Link to="/login" search={{ redirect: "/settings" }} className={buttonVariants({ variant: "outline" })}>
+              Sign in to create keys
+            </Link>
+          )}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>MCP</CardTitle>

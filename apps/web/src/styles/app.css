@@ -2,45 +2,69 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * デザインシステム "Zinc / Signal" (v0.7、デザインキャンバス: docs/DESIGN.md §12)。
+ * - 無彩色は Zinc。差し色 (signal) は 1 色だけで、「動いている・選択中・ビルド中・フォーカス」にしか使わない。主ボタンは白黒
+ * - 文字は Geist、機械が出すもの (ID・コマンド・ログ・数字) は Geist Mono
+ * - プレビューは 16px のドットグリッド (stage) の上に置く
+ */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.52 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --accent: oklch(0.96 0.01 270);
-  --accent-foreground: oklch(0.25 0.05 270);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --brand: oklch(0.58 0.2 275);
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --faint: #6b6b74;
+  --primary: #09090b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --accent: #f4f4f5;
+  --accent-foreground: #09090b;
+  --destructive: #dc2626;
+  --warning: #b45309;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #a1a1aa;
+  --stage: #fafafa;
+  --dot: #dedee3;
+  --code: #0c0c0e;
+  /* signal: 塗りは同じ橙、文字はライトでは濃い橙 (コントラスト 4.5 以上) */
+  --signal: #fb923c;
+  --signal-foreground: #c2410c;
+  --signal-ink: #1c0a00;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.19 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.25 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --accent: oklch(0.28 0.04 275);
-  --accent-foreground: oklch(0.92 0.03 275);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --brand: oklch(0.72 0.16 275);
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #111113;
+  --card-foreground: #fafafa;
+  --popover: #111113;
+  --popover-foreground: #fafafa;
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa;
+  --faint: #8b8b94;
+  --primary: #fafafa;
+  --primary-foreground: #09090b;
+  --secondary: #18181b;
+  --secondary-foreground: #fafafa;
+  --accent: #18181b;
+  --accent-foreground: #fafafa;
+  --destructive: #f87171;
+  --warning: #fbbf24;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #52525b;
+  --stage: #0a0a0a;
+  --dot: #26262b;
+  --code: #0c0c0e;
+  --signal: #fb923c;
+  --signal-foreground: #fb923c;
 }
 
 @theme inline {
@@ -48,8 +72,11 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-faint: var(--faint);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -57,16 +84,23 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-brand: var(--brand);
+  --color-stage: var(--stage);
+  --color-code: var(--code);
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-signal-ink: var(--signal-ink);
+  /* 旧名 (brand) は signal に寄せる */
+  --color-brand: var(--signal-foreground);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
 }
 
 @layer base {
@@ -75,5 +109,131 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    font-feature-settings: "ss01";
   }
+  ::selection {
+    background: color-mix(in oklab, var(--signal) 35%, transparent);
+  }
+}
+
+@utility stage {
+  background-color: var(--stage);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* 小さな大文字の Mono ラベル */
+@utility label-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+@keyframes signal-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@utility animate-signal {
+  animation: signal-pulse 1.6s ease-in-out infinite;
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@utility animate-rise {
+  animation: rise-in 0.3s ease-out;
+}
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+@utility skeleton {
+  background: linear-gradient(90deg, var(--muted) 0, color-mix(in oklab, var(--muted) 60%, var(--border)) 50%, var(--muted) 100%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* ビルドログ: 撮れたスクショがぼかしから現れる / 進行中のログの末尾のカーソル */
+@keyframes reveal-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+@utility animate-reveal {
+  animation: reveal-in 0.6s ease-out;
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@utility animate-caret {
+  animation: caret-blink 1s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-signal,
+  .animate-rise,
+  .animate-reveal,
+  .animate-caret,
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* シンタックスハイライト (sugar-high)。コードの地は常に暗い (--code) */
+.code-surface {
+  --sh-class: #7dd3fc;
+  --sh-identifier: #e4e4e7;
+  --sh-sign: #8b8b94;
+  --sh-property: #fcd34d;
+  --sh-entity: #7dd3fc;
+  --sh-jsxliterals: #d4d4d8;
+  --sh-string: #d9f99d;
+  --sh-keyword: #c4b5fd;
+  --sh-comment: #71717a;
+  background: var(--code);
+  color: #d4d4d8;
+}
+.code-surface .sh__token--comment {
+  font-style: italic;
+}
+.code-surface .sh__line {
+  display: block;
+  min-height: 1lh;
+}
+.code-surface.with-lines {
+  counter-reset: sh-line;
+}
+.code-surface.with-lines .sh__line::before {
+  counter-increment: sh-line;
+  content: counter(sh-line);
+  display: inline-block;
+  width: 2.25rem;
+  padding-right: 0.75rem;
+  text-align: right;
+  color: #52525b;
+  user-select: none;
 }

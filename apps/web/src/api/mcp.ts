@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { Application } from "@shadcn-explorer/core"
 import { ComponentId, ComponentKind, RegistryId, SearchMode } from "@shadcn-explorer/core/domain"
-import { describeError, runApp } from "~/lib/runtime"
+import { describeError, runRead } from "~/lib/runtime"
 import { toAgentMarkdown, toDetailDto, toRegistryDto, toSearchResultDto } from "~/server/dto"
 
 /**
@@ -84,7 +84,7 @@ const callTool = async (name: string, args: unknown, origin: string): Promise<To
       const parsed = Schema.decodeUnknownEither(SearchArgs)(args ?? {})
       if (parsed._tag === "Left") return toolError(`Invalid arguments: ${parsed.left.message}`)
       const a = parsed.right
-      const result = await runApp(
+      const result = await runRead(
         Application.searchComponents({
           _tag: "Text",
           text: a.query,
@@ -112,7 +112,7 @@ const callTool = async (name: string, args: unknown, origin: string): Promise<To
     case "get_component": {
       const parsed = Schema.decodeUnknownEither(GetArgs)(args ?? {})
       if (parsed._tag === "Left") return toolError(`Invalid arguments: ${parsed.left.message}`)
-      const result = await runApp(Application.getComponentDetail(ComponentId.make(`${parsed.right.registry}:${parsed.right.name}`)))
+      const result = await runRead(Application.getComponentDetail(ComponentId.make(`${parsed.right.registry}:${parsed.right.name}`)))
       if (result._tag !== "Success") return toolError(result._tag === "Failure" ? describeError(result.error as never).message : result.message)
       const dto = toDetailDto(result.value)
       return text(toAgentMarkdown(dto), {
@@ -122,7 +122,7 @@ const callTool = async (name: string, args: unknown, origin: string): Promise<To
       })
     }
     case "list_registries": {
-      const result = await runApp(Application.listRegistries)
+      const result = await runRead(Application.listRegistries)
       if (result._tag !== "Success") return toolError("Failed to list registries")
       const registries = result.value.map((r) => toRegistryDto(r.registry, r.componentCount))
       return text(

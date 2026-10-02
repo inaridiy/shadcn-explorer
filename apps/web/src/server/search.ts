@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import { Application } from "@shadcn-explorer/core"
 import { ComponentKind, RegistryId, SearchMode } from "@shadcn-explorer/core/domain"
 import { storeSearchImage } from "~/api/uploads"
-import { AppError, runAppOrThrow } from "~/lib/runtime"
+import { AppError, runReadOrThrow } from "~/lib/runtime"
 import { toSearchResultDto } from "./dto"
 import { validateWith } from "./validate"
 
@@ -12,6 +12,7 @@ export const SearchInput = Schema.Struct({
   mode: Schema.optionalWith(SearchMode, { default: () => "hybrid" as const }),
   kinds: Schema.optional(Schema.Array(ComponentKind)),
   registries: Schema.optional(Schema.Array(RegistryId)),
+  limit: Schema.optionalWith(Schema.Number.pipe(Schema.int(), Schema.between(1, 40)), { default: () => 40 }),
 })
 export type SearchInput = typeof SearchInput.Encoded
 
@@ -20,7 +21,8 @@ export const searchFn = createServerFn({ method: "GET" })
   .validator(validateWith(SearchInput))
   .handler(async ({ data }) => {
     if (data.q.trim().length === 0) return { hits: [], warnings: [] }
-    const result = await runAppOrThrow(
+    const started = Date.now()
+    const result = await runReadOrThrow(
       Application.searchComponents({
         _tag: "Text",
         text: data.q.trim(),
@@ -29,9 +31,11 @@ export const searchFn = createServerFn({ method: "GET" })
           ...(data.kinds?.length ? { kinds: data.kinds } : {}),
           ...(data.registries?.length ? { registryIds: data.registries } : {}),
         },
-        limit: 40,
+        limit: data.limit,
       }),
     )
+    // Workers Logs の Query Builder で検索の待ち時間 (P95) を見るための構造化ログ
+    console.log({ event: "search", mode: data.mode, ms: Date.now() - started, hits: result.hits.length, warnings: result.warnings.length })
     return toSearchResultDto(result)
   })
 
@@ -44,7 +48,7 @@ export const searchByImageFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const stored = await storeSearchImage(data.get("image"))
     if (!stored.ok) throw new AppError({ code: "BAD_REQUEST", message: stored.message, status: 400 })
-    const result = await runAppOrThrow(
+    const result = await runReadOrThrow(
       Application.searchComponents({ _tag: "Image", imageKey: stored.key, filters: {}, limit: 40 }),
     )
     return toSearchResultDto(result)

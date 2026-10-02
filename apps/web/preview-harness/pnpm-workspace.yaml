@@ -1,0 +1,5 @@
+# Standalone project (installed inside the container image, not by the repo workspace)
+packages: []
+# sharp ships prebuilt binaries (@img/sharp-*); its install script is only a source-build fallback
+allowBuilds:
+  sharp: false

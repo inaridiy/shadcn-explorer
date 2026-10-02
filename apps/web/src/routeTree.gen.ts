@@ -10,16 +10,30 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as LiveRouteImport } from './routes/live'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as RegistriesIndexRouteImport } from './routes/registries.index'
 import { Route as RegistriesRegistryIdRouteImport } from './routes/registries.$registryId'
-import { Route as RegistriesNewRouteImport } from './routes/registries.new'
+import { Route as AdminRegistriesNewRouteImport } from './routes/admin.registries.new'
 import { Route as CRegistryIdNameRouteImport } from './routes/c.$registryId.$name'
+import { Route as CRegistryIdNameBuildRouteImport } from './routes/c.$registryId.$name_.build'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LiveRoute = LiveRouteImport.update({
+  id: '/live',
+  path: '/live',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -32,6 +46,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
 const RegistriesIndexRoute = RegistriesIndexRouteImport.update({
   id: '/registries/',
   path: '/registries/',
@@ -42,83 +61,112 @@ const RegistriesRegistryIdRoute = RegistriesRegistryIdRouteImport.update({
   path: '/registries/$registryId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RegistriesNewRoute = RegistriesNewRouteImport.update({
+const AdminRegistriesNewRoute = AdminRegistriesNewRouteImport.update({
   id: '/registries/new',
   path: '/registries/new',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AdminRoute,
 } as any)
 const CRegistryIdNameRoute = CRegistryIdNameRouteImport.update({
   id: '/c/$registryId/$name',
   path: '/c/$registryId/$name',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CRegistryIdNameBuildRoute = CRegistryIdNameBuildRouteImport.update({
+  id: '/c/$registryId/$name_/build',
+  path: '/c/$registryId/$name/build',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
+  '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/registries/$registryId': typeof RegistriesRegistryIdRoute
-  '/registries/new': typeof RegistriesNewRoute
+  '/admin/': typeof AdminIndexRoute
   '/registries/': typeof RegistriesIndexRoute
+  '/admin/registries/new': typeof AdminRegistriesNewRoute
   '/c/$registryId/$name': typeof CRegistryIdNameRoute
+  '/c/$registryId/$name/build': typeof CRegistryIdNameBuildRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/registries/$registryId': typeof RegistriesRegistryIdRoute
-  '/registries/new': typeof RegistriesNewRoute
+  '/admin': typeof AdminIndexRoute
   '/registries': typeof RegistriesIndexRoute
+  '/admin/registries/new': typeof AdminRegistriesNewRoute
   '/c/$registryId/$name': typeof CRegistryIdNameRoute
+  '/c/$registryId/$name/build': typeof CRegistryIdNameBuildRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
+  '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/registries/$registryId': typeof RegistriesRegistryIdRoute
-  '/registries/new': typeof RegistriesNewRoute
+  '/admin/': typeof AdminIndexRoute
   '/registries/': typeof RegistriesIndexRoute
+  '/admin/registries/new': typeof AdminRegistriesNewRoute
   '/c/$registryId/$name': typeof CRegistryIdNameRoute
+  '/c/$registryId/$name_/build': typeof CRegistryIdNameBuildRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
+    | '/live'
     | '/login'
     | '/settings'
     | '/registries/$registryId'
-    | '/registries/new'
+    | '/admin/'
     | '/registries/'
+    | '/admin/registries/new'
     | '/c/$registryId/$name'
+    | '/c/$registryId/$name/build'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/live'
     | '/login'
     | '/settings'
     | '/registries/$registryId'
-    | '/registries/new'
+    | '/admin'
     | '/registries'
+    | '/admin/registries/new'
     | '/c/$registryId/$name'
+    | '/c/$registryId/$name/build'
   id:
     | '__root__'
     | '/'
+    | '/admin'
+    | '/live'
     | '/login'
     | '/settings'
     | '/registries/$registryId'
-    | '/registries/new'
+    | '/admin/'
     | '/registries/'
+    | '/admin/registries/new'
     | '/c/$registryId/$name'
+    | '/c/$registryId/$name_/build'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRouteWithChildren
+  LiveRoute: typeof LiveRoute
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
   RegistriesRegistryIdRoute: typeof RegistriesRegistryIdRoute
-  RegistriesNewRoute: typeof RegistriesNewRoute
   RegistriesIndexRoute: typeof RegistriesIndexRoute
   CRegistryIdNameRoute: typeof CRegistryIdNameRoute
+  CRegistryIdNameBuildRoute: typeof CRegistryIdNameBuildRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -128,6 +176,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/live': {
+      id: '/live'
+      path: '/live'
+      fullPath: '/live'
+      preLoaderRoute: typeof LiveRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -144,6 +206,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/registries/': {
       id: '/registries/'
       path: '/registries'
@@ -158,12 +227,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RegistriesRegistryIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/registries/new': {
-      id: '/registries/new'
+    '/admin/registries/new': {
+      id: '/admin/registries/new'
       path: '/registries/new'
-      fullPath: '/registries/new'
-      preLoaderRoute: typeof RegistriesNewRouteImport
-      parentRoute: typeof rootRouteImport
+      fullPath: '/admin/registries/new'
+      preLoaderRoute: typeof AdminRegistriesNewRouteImport
+      parentRoute: typeof AdminRoute
     }
     '/c/$registryId/$name': {
       id: '/c/$registryId/$name'
@@ -172,17 +241,38 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CRegistryIdNameRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/c/$registryId/$name_/build': {
+      id: '/c/$registryId/$name_/build'
+      path: '/c/$registryId/$name/build'
+      fullPath: '/c/$registryId/$name/build'
+      preLoaderRoute: typeof CRegistryIdNameBuildRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
+interface AdminRouteChildren {
+  AdminIndexRoute: typeof AdminIndexRoute
+  AdminRegistriesNewRoute: typeof AdminRegistriesNewRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminIndexRoute: AdminIndexRoute,
+  AdminRegistriesNewRoute: AdminRegistriesNewRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRouteWithChildren,
+  LiveRoute: LiveRoute,
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
   RegistriesRegistryIdRoute: RegistriesRegistryIdRoute,
-  RegistriesNewRoute: RegistriesNewRoute,
   RegistriesIndexRoute: RegistriesIndexRoute,
   CRegistryIdNameRoute: CRegistryIdNameRoute,
+  CRegistryIdNameBuildRoute: CRegistryIdNameBuildRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

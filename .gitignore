@@ -7,3 +7,7 @@ dist
 *.local
 .tanstack
 coverage
+
+# ローカル専用の作業ファイル
+apps/web/backfill/
+evals/models/out*/

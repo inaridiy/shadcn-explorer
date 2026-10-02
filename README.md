@@ -1,43 +1,94 @@
 # Shadcn Explorer
 
-shadcn レジストリを登録すると、全コンポーネントを自動で取り込み、使い方ドキュメントとプレビューを生成して、**全レジストリ横断で検索**できるようにするアプリ。Coding Agent からは MCP で使える。
+**Search every shadcn registry in one place, with a live demo of each component.**
 
-- キーワード (BM25) / 意味 / 見た目 (マルチモーダル) / ハイブリッド検索、画像での検索
-- ui.shadcn.com/docs/components/* と同じ構成のドキュメント (`gpt-6-luna` がソースを読んで生成)
-- プレビューはサンドボックスの Coding Agent がデモを作り、Browser Rendering で撮影する
-- MCP (`search_components` / `get_component` / `list_registries`) と REST API
+→ https://shadcn-explorer.inaridiy.com
 
-設計の詳細・コスト試算・未決事項は [docs/DESIGN.md](docs/DESIGN.md) を参照。
+shadcn/ui is copy-paste by design, so its components are spread across hundreds of third-party registries. Shadcn Explorer imports the registries listed in the [official shadcn directory](https://ui.shadcn.com/docs/directory), plus shadcn/ui itself. For each component it writes a short usage doc and builds a running demo, then lets you browse and search all of them together.
 
-## 構成
+- **Gallery and search.** Browse across registries, or press ⌘K. Search matches keywords first, then adds results that are close in meaning or appearance. You can also search with an image.
+- **Real previews.** Each demo is built with `shadcn add` and Vite in a sandbox, so the preview is the component as published, not a screenshot from its site. Animated components get animated thumbnails.
+- **Install command.** Every component page shows the `npx shadcn add` command for it.
+- **For coding agents.** An MCP server and a REST API expose the same search (see [Use it from an agent](#use-it-from-an-agent)).
+- **Open build logs.** Every demo has a public build log, and `/live` shows imports as they happen.
+- **Themes.** Each registry's theme (colors, fonts, radius) is detected from its install docs and applied to its previews.
 
+Docs and demos are written by an LLM and can be wrong. Use the report links on each page if something looks off.
+
+## Use it from an agent
+
+The MCP endpoint is `https://shadcn-explorer.inaridiy.com/mcp` (Streamable HTTP, no API key needed). For Claude Code:
+
+```bash
+claude mcp add --transport http shadcn-explorer https://shadcn-explorer.inaridiy.com/mcp
 ```
-packages/core   ドメイン (Effect Schema の ADT、純粋関数) / ポート (Context.Tag) / ユースケース / インメモリ実装
-apps/web        Cloudflare Worker: TanStack Start (UI + createServerFn)、Hono (REST / MCP / 認証)、
-                アダプタ (D1, R2, Vectorize, Browser Rendering, Gemini, OpenAI, CF-Open-Agents-API)、Workflows
+
+For Cursor, VS Code and other clients that take a JSON config:
+
+```json
+{
+  "mcpServers": {
+    "shadcn-explorer": { "type": "http", "url": "https://shadcn-explorer.inaridiy.com/mcp" }
+  }
+}
 ```
 
-## ローカル開発 (API キー無しで動く)
+It provides three tools: `search_components`, `get_component` and `list_registries`. The same data is available over REST, for example:
+
+```bash
+curl "https://shadcn-explorer.inaridiy.com/api/v1/search?q=gradient+button&limit=5"
+```
+
+Requests are rate-limited per IP. If you need more, open an issue.
+
+## Request a registry or report a problem
+
+Feedback goes through GitHub Issues, each with its own form:
+
+| You want to… | Open |
+| --- | --- |
+| Add a registry that isn't listed | [Registry request](https://github.com/inaridiy/shadcn-explorer/issues/new?template=registry-request.yml) |
+| Report a broken or wrong preview | [Preview report](https://github.com/inaridiy/shadcn-explorer/issues/new?template=preview-report.yml) |
+| Report a registry whose colors, fonts or radius look wrong everywhere | [Theme report](https://github.com/inaridiy/shadcn-explorer/issues/new?template=theme-report.yml) |
+| Anything else | [New issue](https://github.com/inaridiy/shadcn-explorer/issues/new) |
+
+The preview and theme forms are also linked from component and registry pages, with the fields filled in.
+
+Registries in the official directory are imported automatically and marked **Official**. Requested registries are reviewed by hand and marked **Community**. Every registry is re-synced about once a week.
+
+## Run it locally
+
+You need Node.js (developed on 24), pnpm and Docker. No API keys are needed: local mode uses a fake LLM and fake previews.
 
 ```bash
 pnpm install
 cd apps/web
-cp .dev.vars.example .dev.vars        # EXPLORER_MODE=local
+cp .dev.vars.example .dev.vars   # EXPLORER_MODE=local
 pnpm db:migrate:local
-pnpm dev                              # http://localhost:3000
+pnpm dev                         # http://localhost:3000
 ```
 
-- `EXPLORER_MODE=local` では D1 / R2 は Miniflare、検索は D1 FTS5 と D1 上のベクトル、AI はフェイクで動く。
-- `.dev.vars` に `OPENAI_API_KEY` を入れると、ドキュメント生成だけ本物の `gpt-6-luna` になる。
+The first `pnpm dev` takes a few minutes, because it builds the preview container image with Docker.
 
-## テスト・評価
+To run the tests and the type checker:
 
 ```bash
-pnpm -r test                          # core の単体テスト (インメモリ Layer)
+pnpm -r test
 pnpm -r typecheck
-pnpm --filter @shadcn-explorer/core eval:search -- --base http://localhost:3000 --cookie "<session cookie>"
 ```
 
-## デプロイ
+## How it is built
 
-手順の抜粋は [docs/DESIGN.md §12](docs/DESIGN.md) にある。D1 / R2 / Vectorize (メタデータインデックス `registry_id` `kind` `modality`) を作り、シークレット (`BETTER_AUTH_SECRET` `OPENAI_API_KEY` `GEMINI_API_KEY` ほか) を設定してから `pnpm deploy` する。プレビュー生成を有効にするには、別途 [CF-Open-Agents-API](https://github.com/inaridiy/CF-Open-Agents-API) をデプロイして Service Binding `AGENTS` で繋ぐ。
+It runs on Cloudflare Workers (TanStack Start, Hono, D1, R2, Vectorize, Queues, Workflows and Containers), with the core logic written in [Effect](https://effect.website).
+
+```
+packages/core            domain model, ports and use cases (pure, tested with in-memory adapters)
+apps/web                 the Worker: UI, REST, MCP and the Cloudflare adapters
+apps/web/preview-harness container image that builds and screenshots each demo
+```
+
+The design notes are in Japanese: [docs/DESIGN.md](docs/DESIGN.md) covers the architecture and its trade-offs, and [docs/OPERATIONS.md](docs/OPERATIONS.md) covers operating and deploying it.
+
+## License
+
+[MIT](LICENSE). Components shown on the site belong to their registries and keep their own licenses.

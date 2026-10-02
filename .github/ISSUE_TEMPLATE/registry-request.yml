@@ -1,0 +1,34 @@
+name: Registry request
+description: Request a shadcn registry to be indexed / Shadcn Explorer に追加してほしい shadcn レジストリを申請する
+title: "[Registry] "
+labels: ["registry-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        shadcn 公式ディレクトリに載っているレジストリは自動で取り込みます。それ以外は運営者が確認して取り込み、Community のバッジを付けて検索に出します。
+        Registries in the official shadcn directory are imported automatically. Others are reviewed by the maintainer and listed with a Community badge.
+  - type: input
+    id: registry
+    attributes:
+      label: Registry
+      description: "@namespace, registry.json URL, or site URL / @namespace、registry.json の URL、またはサイトの URL"
+      placeholder: "@acme or https://acme.dev/r/registry.json"
+    validations:
+      required: true
+  - type: input
+    id: homepage
+    attributes:
+      label: Homepage / docs
+      placeholder: https://acme.dev
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: How the theme is installed (e.g. pasted into globals.css), anything special about previews / テーマの配布方法 (globals.css に貼る方式など)、プレビューで気をつけることなど
+  - type: checkboxes
+    id: maintainer
+    attributes:
+      label: Relationship
+      options:
+        - label: I maintain this registry / このレジストリのメンテナーです

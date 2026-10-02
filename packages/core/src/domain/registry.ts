@@ -1,6 +1,9 @@
 import { Data, Either, Schema } from "effect"
 import { RegistryId, UserId } from "./ids.js"
 import { RegistryLocator } from "./registry-locator.js"
+import { RegistryTheme, ThemeConfig, isPreviewOnHold, stableHash } from "./theme.js"
+import { canonicalJson } from "./component.js"
+import { RegistryListing, operatorListing } from "./directory.js"
 
 /** epoch millis */
 export const Timestamp = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
@@ -34,6 +37,48 @@ export const RegistryStatus = Schema.Union(
 )
 export type RegistryStatus = typeof RegistryStatus.Type
 
+/**
+ * レジストリ単位のプレビュー設定 (運営者が編集するデータ。テーマはエージェント・検出の提案を承認して入ることもある)。
+ * コードに分岐を足す代わりにここへ書く。
+ * ビルド時の設定 (変えるとビルドし直す。デモは再利用する):
+ * - themeCss: 手書きの上書き CSS。レジストリがテーマを「globals.css に貼る」方式で、トークンで表せないときに使う
+ * - baseItems / themeVars / fonts / css: テーマ (theme.ts の ThemeConfig)
+ * - pins: 依存のバージョン固定 (pnpm overrides)。未指定の依存が最新メジャーに解決されて壊れる場合に使う
+ * 実行時の設定 (変えても撮り直しだけ。閲覧者が切り替えられる):
+ * - tokens / variants: CSS 変数の値
+ */
+export const RegistryPreviewConfig = Schema.Struct({
+  themeCss: Schema.optional(Schema.String.pipe(Schema.maxLength(200_000))),
+  pins: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
+  ...ThemeConfig.fields,
+})
+export type RegistryPreviewConfig = typeof RegistryPreviewConfig.Type
+
+/** ビルドに効く設定のハッシュ。プレビューの Built / Captured が持ち、違えばビルドし直す */
+export const buildConfigHash = (config: RegistryPreviewConfig): string => {
+  const { tokens: _tokens, variants: _variants, ...build } = config
+  return stableHash(canonicalJson(build))
+}
+
+/** 既定のトークンのハッシュ。違えば撮り直す (HTML が実行時の注入に対応していなければビルドし直す) */
+export const tokensHash = (config: RegistryPreviewConfig): string => stableHash(canonicalJson(config.tokens ?? null))
+
+/**
+ * プレビューの計画に要るレジストリの情報。
+ * onHold: テーマをエージェントが調べている間はプレビューを作らない (決まる前に作ると作り直しになる)
+ */
+export interface RegistryPreviewContext {
+  readonly configHash: string
+  readonly tokensHash: string
+  readonly onHold: boolean
+}
+
+export const emptyPreviewContext: RegistryPreviewContext = {
+  configHash: buildConfigHash({}),
+  tokensHash: tokensHash({}),
+  onHold: false,
+}
+
 export class Registry extends Schema.Class<Registry>("Registry")({
   id: RegistryId,
   /** registry.json の name */
@@ -48,7 +93,18 @@ export class Registry extends Schema.Class<Registry>("Registry")({
   createdAt: Timestamp,
   /** 登録時点の registry.json のアイテム数 (ユーザー別の月次クォータ計算に使う) */
   declaredItems: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  previewConfig: Schema.optionalWith(RegistryPreviewConfig, { default: () => ({}) }),
+  /** テーマの判定状態 (registry.json の検出 → エージェント。確信度が低いものだけ提案に留める) */
+  theme: Schema.optionalWith(RegistryTheme, { default: () => ({ _tag: "Unresolved" as const }) }),
+  /** 出自 (公式ディレクトリ / shadcn/ui / コミュニティ)。v0.6 以前の行は運営者の登録として読み、ディレクトリの同期が Official に直す */
+  listing: Schema.optionalWith(RegistryListing, { default: () => operatorListing }),
 }) {}
+
+export const previewContextOf = (registry: Registry, now: number): RegistryPreviewContext => ({
+  configHash: buildConfigHash(registry.previewConfig),
+  tokensHash: tokensHash(registry.previewConfig),
+  onHold: isPreviewOnHold(registry.theme, now),
+})
 
 export class IllegalRegistryTransition extends Data.TaggedError("IllegalRegistryTransition")<{
   readonly registryId: RegistryId

@@ -10,6 +10,8 @@ import { AgentError, DocWriter, type DocWriterInput } from "@shadcn-explorer/cor
 export interface OpenAIDocWriterOptions {
   readonly apiKey: string
   readonly model: string
+  /** AI Gateway (Authenticated Gateway) のトークン */
+  readonly gatewayToken?: string
   /** AI Gateway 経由にする場合: https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai */
   readonly baseUrl?: string
 }
@@ -27,8 +29,11 @@ export const usageDocJsonSchema = {
     visualDescription: str,
     whenToUse: strArray,
     usage: str,
+    // プロンプトの「2-4 件」だけでは半数以上が空だった (evals/models、2026-10-01)。strict でも minItems / maxItems は通る
     examples: {
       type: "array",
+      minItems: 1,
+      maxItems: 4,
       items: {
         type: "object",
         additionalProperties: false,
@@ -75,7 +80,7 @@ Fill every field:
 - keywords: 8-20 search keywords including synonyms (e.g. "cta", "shiny") AND their Japanese equivalents (e.g. "ボタン", "かっこいい", "ドット絵") so that Japanese keyword search also matches.`
 }
 
-const ResponsesOutput = Schema.Struct({
+export const ResponsesOutput = Schema.Struct({
   status: Schema.optional(Schema.String),
   output: Schema.Array(
     Schema.Struct({
@@ -92,7 +97,7 @@ const ResponsesOutput = Schema.Struct({
   ),
 })
 
-const outputText = (res: typeof ResponsesOutput.Type) =>
+export const outputText = (res: typeof ResponsesOutput.Type) =>
   res.output
     .flatMap((o) => (o.type === "message" ? (o.content ?? []) : []))
     .filter((c) => c.type === "output_text")
@@ -109,7 +114,9 @@ const normalize = (raw: unknown): unknown => {
 }
 
 /** モデルがコードフェンス付きで返した場合に剥がす */
-const stripFences = (code: string) => code.replace(/^\s*```[a-z]*\n/i, "").replace(/\n```\s*$/, "").trim()
+export const stripFences = (code: string) => code.replace(/^\s*```[a-z]*\n/i, "").replace(/\n```\s*$/, "").trim()
+
+const STEP = "doc"
 
 export const OpenAIDocWriter = (options: OpenAIDocWriterOptions) => {
   const base = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "")
@@ -122,9 +129,18 @@ export const OpenAIDocWriter = (options: OpenAIDocWriterOptions) => {
           const res = await fetch(`${base}/responses`, {
             method: "POST",
             signal,
-            headers: { "content-type": "application/json", authorization: `Bearer ${options.apiKey}` },
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${options.apiKey}`,
+              // AI Gateway 経由のとき: 認証と、ゲートウェイのログ・spend limit で絞り込むためのメタデータ
+              ...(options.gatewayToken ? { "cf-aig-authorization": `Bearer ${options.gatewayToken}` } : {}),
+              ...(options.baseUrl?.includes("gateway.ai.cloudflare.com")
+                ? { "cf-aig-metadata": JSON.stringify({ registry: input.snapshot.registryId, step: STEP }) }
+                : {}),
+            },
             body: JSON.stringify({
-              model: options.model,
+              // 無料枠に応じて呼び出し側がモデルを選ぶ (packages/core の llm-routing)
+              model: input.model ?? options.model,
               instructions: INSTRUCTIONS,
               input: buildDocPrompt(input),
               text: { format: { type: "json_schema", name: "usage_doc", strict: true, schema: usageDocJsonSchema } },

@@ -14,6 +14,8 @@ const createAuth = () =>
     secret: env.BETTER_AUTH_SECRET ?? "local-dev-secret-change-me-local-dev-secret",
     baseURL: env.BETTER_AUTH_URL,
     emailAndPassword: { enabled: true },
+    // セッションを署名付き Cookie に 5 分キャッシュする (ログイン中の閲覧者のナビゲーションごとの D1 往復を省く)
+    session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
     socialProviders:
       env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
         ? { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } }
