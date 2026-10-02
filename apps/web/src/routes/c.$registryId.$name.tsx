@@ -11,6 +11,7 @@ import { Badge } from "~/components/ui/badge"
 import { buttonVariants } from "~/components/ui/button"
 import { type RunView, type StepView, formatDuration, splitRuns, stepsFromStatus, stepsOf } from "~/lib/build-run"
 import { previewReportUrl, themeReportUrl } from "~/lib/links"
+import { socialMeta } from "~/lib/seo"
 import { useLiveEvents } from "~/lib/live"
 import { cn } from "~/lib/utils"
 import { getComponentFn, similarComponentsFn } from "~/server/components"
@@ -20,7 +21,17 @@ export const Route = createFileRoute("/c/$registryId/$name")({
   loader: ({ params }) => getComponentFn({ data: params }),
   head: ({ loaderData }) => ({
     meta: loaderData
-      ? [{ title: `${loaderData.title} · ${loaderData.registryId} — Shadcn Explorer` }, { name: "description", content: loaderData.doc?.summary ?? loaderData.description }]
+      ? [
+          { title: `${loaderData.title} · ${loaderData.registryId} — Shadcn Explorer` },
+          { name: "description", content: loaderData.doc?.summary ?? loaderData.description },
+          // カード画像はこのコンポーネントの撮影画像 (サイトの既定が dark なので dark を優先)。まだ無ければサイトの既定
+          ...socialMeta({
+            title: `${loaderData.title} · ${loaderData.registryId} — Shadcn Explorer`,
+            description: loaderData.doc?.summary ?? loaderData.description,
+            image: loaderData.screenshot?.dark ?? loaderData.screenshot?.light ?? "/og.png",
+            path: `/c/${loaderData.registryId}/${loaderData.name}`,
+          }),
+        ]
       : [],
   }),
   component: ComponentPage,
